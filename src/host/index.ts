@@ -128,6 +128,32 @@ function lastLiveFacts(agent: Agent | undefined): LiveFacts {
   }
 }
 
+const FINAL_MESSAGE_MAX_CHARS = 200_000
+
+// The agent's last full reply text, so the Map surfaces exactly what a chat turn would have shown.
+function lastAssistantText(agent: Agent): string | null {
+  const events: readonly unknown[] = agent.session.events
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (!event || typeof event !== 'object') continue
+    const record = event as { type?: unknown; data?: unknown }
+    if (record.type !== 'assistant/message') continue
+    const data = record.data && typeof record.data === 'object' ? record.data as { message?: unknown } : null
+    const message = data?.message && typeof data.message === 'object' ? data.message as { content?: unknown } : null
+    const content = Array.isArray(message?.content) ? message.content : []
+    const textParts: string[] = []
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue
+      const piece = part as { type?: unknown; text?: unknown }
+      if (piece.type === 'text' && typeof piece.text === 'string' && piece.text.trim()) textParts.push(piece.text)
+    }
+    const joined = textParts.join('\n\n').trim()
+    if (joined.length === 0) return null
+    return joined.length > FINAL_MESSAGE_MAX_CHARS ? `${joined.slice(0, FINAL_MESSAGE_MAX_CHARS)}\n[truncated]` : joined
+  }
+  return null
+}
+
 function compactTeamHistory(events: readonly unknown[]): Array<{ type: string; contentExcerpt: string }> {
   const history: Array<{ type: string; contentExcerpt: string }> = []
   let remainingChars = TEAM_CONTEXT_MAX_CHARS
@@ -720,6 +746,7 @@ class AgentOrchestrator {
     void agent.whenIdle().then(async () => {
       const current = this.knotline.database.getNodeRun(nodeRunId)
       const outcome = lastLiveFacts(agent).outcome
+      const finalMessage = lastAssistantText(agent)
       if (current && outcome === 'error' && ['queued', 'running'].includes(current.status)) {
         const retryCount = this.transientRetries.get(nodeRunId) ?? 0
         if (retryCount < 1) {
@@ -737,6 +764,7 @@ class AgentOrchestrator {
             sessionId: String(agent.id),
             status: 'blocked',
             error: `DSH Agent turn ended with ${outcome}.`,
+            ...(finalMessage ? { finalMessage } : {}),
           }),
         })
         return
@@ -750,6 +778,19 @@ class AgentOrchestrator {
             sessionId: String(agent.id),
             status: 'blocked',
             error: 'The DSH Agent became idle without calling a Knotline completion tool.',
+            ...(finalMessage ? { finalMessage } : {}),
+          }),
+        })
+        return
+      }
+      if (current && outcome === 'completed' && finalMessage) {
+        await knotlineJson(this.ctx, `/node-runs/${encodeURIComponent(nodeRunId)}/runtime`, {
+          method: 'POST',
+          headers: AGENT_REQUEST_HEADERS,
+          body: JSON.stringify({
+            sessionId: String(agent.id),
+            status: 'idle',
+            finalMessage,
           }),
         })
       }

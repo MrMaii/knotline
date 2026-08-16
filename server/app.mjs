@@ -651,7 +651,7 @@ function parseMapItemCreate(body) {
 
 function parseNodeRunRuntime(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["sessionId", "status", "error"]));
+  assertAllowedKeys(body, new Set(["sessionId", "status", "error", "finalMessage"]));
   if (!["idle", "working", "waiting", "blocked", "paused", "offline"].includes(body.status)) {
     throw new ApiError(400, "INVALID_FIELD", "Unknown Agent runtime status");
   }
@@ -659,6 +659,7 @@ function parseNodeRunRuntime(body) {
     sessionId: stringField(body.sessionId, "sessionId", { required: true, maxLength: 256 }),
     status: body.status,
     error: stringField(body.error ?? null, "error", { nullable: true, maxLength: 10_000 }),
+    finalMessage: stringField(body.finalMessage ?? null, "finalMessage", { nullable: true, maxLength: 200_000 }),
   };
 }
 
@@ -3601,13 +3602,22 @@ export function createKnotlineServer(options = {}) {
               ? "waiting_input"
               : input.status === "working" && current.status === "queued" ? "running" : current.status,
             error: input.error,
+            ...(input.finalMessage
+              ? { result: { ...(current.result ?? {}), finalMessage: input.finalMessage } }
+              : {}),
           });
-          const binding = orchestration.updateBinding(current.agentProfileId, {
-            sessionId: input.sessionId,
-            currentNodeRunId: current.id,
-            status: input.status,
-            lastError: input.error,
-          });
+          const existingBinding = database.getAgentRuntimeBindingByProfile(current.agentProfileId);
+          const bindingMovedOn = input.status === "idle"
+            && existingBinding?.currentNodeRunId
+            && existingBinding.currentNodeRunId !== current.id;
+          const binding = bindingMovedOn
+            ? existingBinding
+            : orchestration.updateBinding(current.agentProfileId, {
+              sessionId: input.sessionId,
+              currentNodeRunId: current.id,
+              status: input.status,
+              lastError: input.error,
+            });
           events.emit("agent.runtime.updated", { projectId: current.projectId, binding, nodeRun });
           return sendJson(response, 200, { nodeRun, binding });
         }
@@ -3654,6 +3664,7 @@ export function createKnotlineServer(options = {}) {
               impact: "阅读实施结果后，该通知节点可从画布关闭。",
               context: {
                 showOnMap: true,
+                evidence: String(result.nodeRun.result?.evidence ?? ""),
                 nodeRunNodeId: `node_run:${result.nodeRun.id}`,
                 approvalPoolId: result.approvalExecution.approvalPool?.id ?? null,
                 artifactId: result.approvalExecution.artifact.id,

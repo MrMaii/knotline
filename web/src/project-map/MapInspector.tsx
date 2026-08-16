@@ -23,6 +23,20 @@ function DetailList({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+function TextSection({ label, value }: { label: string; value: unknown }) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return (
+    <section>
+      <strong>{label}</strong>
+      <p className="project-map-document-content">{value}</p>
+    </section>
+  );
+}
+
+function runResultOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
 export function MapInspector({
   node,
   deciding,
@@ -51,6 +65,10 @@ export function MapInspector({
   const contextDocuments = Array.isArray(details.contextDocuments)
     ? details.contextDocuments as Array<Record<string, unknown>>
     : [];
+  const notificationContext = node.entityType === "notification" ? runResultOf(details.context) : null;
+  const runResult = runResultOf(
+    node.entityType === "node_run" ? details.result : node.entityType === "notification" ? details.runResult : null,
+  );
 
   async function sendAgentMessage(mode: "followup" | "steer" | "inject") {
     if (!agentMessage.trim()) return;
@@ -90,6 +108,18 @@ export function MapInspector({
       )}
       {node.entityType === "notification" && typeof details.impact === "string" && (
         <section><strong>{text("结果影响", "Impact")}</strong><p className="project-map-document-content">{details.impact}</p></section>
+      )}
+      <TextSection
+        label={text("交付摘要", "Delivery summary")}
+        value={node.entityType === "delivery" ? details.summary : node.entityType === "node_run" ? runResult?.summary : undefined}
+      />
+      <TextSection
+        label={text("验证证据", "Validation evidence")}
+        value={runResult?.evidence ?? notificationContext?.evidence ?? (node.entityType === "delivery" ? details.evidence : undefined)}
+      />
+      <TextSection label={text("Agent 完整回复", "Agent full reply")} value={runResult?.finalMessage} />
+      {node.entityType === "scheduled_trigger" && (
+        <TextSection label={text("最近一次完整回复", "Latest full reply")} value={details.lastRunFinalMessage} />
       )}
       {node.entityType === "skill" && typeof details.description === "string" && details.description && (
         <section><strong>{text("说明", "Description")}</strong><p className="project-map-document-content">{details.description}</p></section>

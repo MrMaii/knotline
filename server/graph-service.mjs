@@ -436,6 +436,7 @@ export function createGraphService(database, options = {}) {
               lastRunStatus: latestRun?.status ?? null,
               lastRunSummary: latestRun?.result?.summary ?? null,
               lastRunEvidence: latestRun?.result?.evidence ?? null,
+              lastRunFinalMessage: latestRun?.result?.finalMessage ?? null,
               lastRunAt: latestRun?.completedAt ?? latestRun?.startedAt ?? null,
             },
           },
@@ -699,21 +700,29 @@ export function createGraphService(database, options = {}) {
           details: proposal,
         },
         }, defaultPosition(index, "review"))),
-      ...mapNotifications.map((notification, index) => positionedNode(layouts, {
-        projectId,
-        entityType: "notification",
-        entityId: notification.id,
-        layer: "governance",
-        zIndex: index + 1,
-        data: {
-          title: notification.title,
-          subtitle: notification.body,
-          status: "unread",
-          kind: "Notification",
-          entityVersion: null,
-          details: { ...notification, content: notification.body },
-        },
-      }, defaultPosition(index, "notification"))),
+      ...mapNotifications.map((notification, index) => {
+        const linkedRunNodeId = typeof notification.context?.nodeRunNodeId === "string"
+          ? notification.context.nodeRunNodeId
+          : null;
+        const linkedRun = linkedRunNodeId
+          ? orchestrated.nodeRuns.find((run) => nodeId("node_run", run.id) === linkedRunNodeId) ?? null
+          : null;
+        return positionedNode(layouts, {
+          projectId,
+          entityType: "notification",
+          entityId: notification.id,
+          layer: "governance",
+          zIndex: index + 1,
+          data: {
+            title: notification.title,
+            subtitle: notification.body,
+            status: "unread",
+            kind: "Notification",
+            entityVersion: null,
+            details: { ...notification, content: notification.body, runResult: linkedRun?.result ?? null },
+          },
+        }, defaultPosition(index, "notification"));
+      }),
     ]);
     const teamEdges = governed.teamMemberships.map((membership) => ({
       id: `team-member:${membership.memberAgentId}:${membership.teamAgentId}`,
