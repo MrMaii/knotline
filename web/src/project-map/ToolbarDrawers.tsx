@@ -12,11 +12,11 @@ interface NodeDrawerProps {
 }
 
 const NODE_ENTRIES: Array<{ kind: RootNodeKind; chinese: string; english: string; hintChinese: string; hintEnglish: string }> = [
-  { kind: "agent", chinese: "Agent 节点", english: "Agent node", hintChinese: "独立对话与执行单元", hintEnglish: "Conversation and execution unit" },
-  { kind: "request", chinese: "诉求节点", english: "Request node", hintChinese: "问题、功能或 Debug", hintEnglish: "Question, feature, or Debug" },
-  { kind: "backlog", chinese: "积压池节点", english: "Backlog node", hintChinese: "低优先级任务池", hintEnglish: "Low-priority work pool" },
-  { kind: "approval", chinese: "审批池节点", english: "Approval node", hintChinese: "集中存入与抽取预案", hintEnglish: "Store and pull proposals" },
-  { kind: "scheduled", chinese: "定时触发节点", english: "Schedule node", hintChinese: "按频次输入 Prompt", hintEnglish: "Send a Prompt on schedule" },
+  { kind: "agent", chinese: "Agent 节点", english: "Agent node", hintChinese: "连诉求执行 · 连 Agent 组 Team", hintEnglish: "Link a Request to run · link an Agent to form a Team" },
+  { kind: "request", chinese: "诉求节点", english: "Request node", hintChinese: "连 Agent 立即执行 · 连积压池排队", hintEnglish: "Link an Agent to run now · link a Backlog to queue" },
+  { kind: "backlog", chinese: "积压池节点", english: "Backlog node", hintChinese: "收诉求排队 · 连 Agent 自动分配", hintEnglish: "Queues Requests · linked Agents auto-pull work" },
+  { kind: "approval", chinese: "审批池节点", english: "Approval node", hintChinese: "存入计划待批 · 受信 Agent 抽取执行", hintEnglish: "Deposit plans · a trusted Agent pulls approved work" },
+  { kind: "scheduled", chinese: "定时触发节点", english: "Schedule node", hintChinese: "连 Agent 或 Team 按频次发 Prompt", hintEnglish: "Sends its Prompt to an Agent or Team on schedule" },
 ];
 
 export function NodeDrawer({ creating, workspacePath, onActivate, onCreateSkill }: NodeDrawerProps) {

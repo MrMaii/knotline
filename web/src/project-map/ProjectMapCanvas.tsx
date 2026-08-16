@@ -302,6 +302,17 @@ export function ProjectMapCanvas({
         <MiniMap pannable zoomable />
         <Controls showInteractive={false} />
       </ReactFlow>
+      {nodes.length === 0 && (
+        <div className="project-map-empty-guide" role="note">
+          <strong>{text("三步跑通第一个工作流", "Your first workflow in three steps")}</strong>
+          <ol>
+            <li><b>1</b>{text("从右上「节点」抽屉拖出一个 Agent", "Drag an Agent from the Nodes drawer")}</li>
+            <li><b>2</b>{text("再拖出一个诉求，写下你想要什么", "Drag a Request and describe what you want")}</li>
+            <li><b>3</b>{text("把诉求连向 Agent —— 连线即执行", "Connect the Request to the Agent — the line runs it")}</li>
+          </ol>
+          <small>{text("回答、计划、审核和交付会自动长在同一张地图上", "Answers, plans, reviews, and deliveries grow on this map by themselves")}</small>
+        </div>
+      )}
       {pendingConnection && (() => {
         const upward = orientConnection(pendingConnection, "up");
         const downward = orientConnection(pendingConnection, "down");
