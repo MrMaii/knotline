@@ -34,7 +34,7 @@ function buildPrompt(project, tasks) {
     updatedAt: task.activityUpdatedAt,
   }));
   return [
-    "你是 Codex。请根据下面的任务面板快照，为项目负责人写一段项目总结。",
+    "你是 Knotline 的项目总结助手。请根据下面的项目地图快照，为项目负责人写一段项目总结。",
     "要求：只输出一段 60 至 120 字的简体中文；直接说明当前进展、主要风险或阻碍、下一步重点；不要使用标题、列表或 Markdown；不要调用工具。",
     JSON.stringify({
       project: project.name,
@@ -51,11 +51,14 @@ export class ProjectSummaryService {
     this.codexExecutable = options.codexExecutable;
     this.workspacePath = options.workspacePath;
     this.processEnv = options.processEnv ?? process.env;
+    this.disabled = options.disabled === true;
     this.active = new Map();
     this.closed = false;
-    this.timer = setInterval(() => void this.refreshDueProjects(), CHECK_INTERVAL_MS);
-    this.timer.unref();
-    void this.refreshDueProjects();
+    this.timer = this.disabled
+      ? null
+      : setInterval(() => void this.refreshDueProjects(), CHECK_INTERVAL_MS);
+    this.timer?.unref();
+    if (!this.disabled) void this.refreshDueProjects();
   }
 
   get(projectId) {
@@ -63,7 +66,7 @@ export class ProjectSummaryService {
       throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' was not found`);
     }
     const summary = this.database.getProjectSummary(projectId);
-    if (isDue(summary)) void this.refresh(projectId);
+    if (!this.disabled && isDue(summary)) void this.refresh(projectId);
     return {
       projectId,
       summary: summary.summary,
@@ -74,6 +77,7 @@ export class ProjectSummaryService {
   }
 
   refresh(projectId) {
+    if (this.disabled) return Promise.resolve();
     const current = this.active.get(projectId);
     if (current) return current.promise;
     const active = { child: null, promise: null };
@@ -146,7 +150,7 @@ export class ProjectSummaryService {
 
   async close() {
     this.closed = true;
-    clearInterval(this.timer);
+    if (this.timer) clearInterval(this.timer);
     const active = [...this.active.values()];
     for (const entry of active) signalProcessTree(entry.child, "SIGTERM");
     await Promise.allSettled(active.map((entry) => entry.promise));

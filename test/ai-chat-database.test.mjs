@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { TaskboardDatabase } from "../server/database.mjs";
+import { KnotlineDatabase } from "../server/database.mjs";
 
 async function createFixture() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-database-"));
-  const filename = path.join(directory, "taskboard.sqlite");
-  const database = new TaskboardDatabase(filename);
+  const directory = await mkdtemp(path.join(os.tmpdir(), "knotline-ai-database-"));
+  const filename = path.join(directory, "knotline.sqlite");
+  const database = new KnotlineDatabase(filename);
   return {
     database,
     directory,
@@ -105,7 +105,7 @@ test("opening the database interrupts abandoned runs and preserves resumable Cod
   });
   fixture.database.close();
 
-  const reopened = new TaskboardDatabase(fixture.filename);
+  const reopened = new KnotlineDatabase(fixture.filename);
   fixture.database = reopened;
   try {
     assert.equal(reopened.getAiChatRun("run-1").status, "interrupted");

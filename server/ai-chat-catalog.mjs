@@ -3,7 +3,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { withoutKnotlineLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
 import { ApiError } from "./database.mjs";
 
@@ -211,7 +211,7 @@ function listSkills(codexExecutable, workspacePath, processEnv) {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "codex-taskboard", version: "0.1.0" },
+          clientInfo: { name: "knotline", version: "0.1.0" },
           capabilities: { experimentalApi: true },
         },
       });
@@ -255,7 +255,7 @@ export async function discoverAiCatalog({
   workspacePath,
   processEnv,
 }) {
-  const environment = withoutTaskboardLauncherEnvironment(processEnv);
+  const environment = withoutKnotlineLauncherEnvironment(processEnv);
   const modelCommand = executableCommand(codexExecutable, ["debug", "models"]);
   const [modelResult, skillEntries] = await Promise.all([
     execFileAsync(modelCommand.executable, modelCommand.args, {

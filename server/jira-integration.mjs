@@ -293,7 +293,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
     const availableStatuses = transitions.map((candidate) => ({
       id: String(candidate.id),
       name: String(candidate.name ?? candidate.to?.name ?? ""),
-      taskboardStatus: taskStatusFromJira(candidate.to),
+      knotlineStatus: taskStatusFromJira(candidate.to),
     }));
     if (matches.length === 0) {
       throw new ApiError(
@@ -310,7 +310,7 @@ export function createJiraIntegration({ configStore, database, fetch: fetchImple
         `Jira 有多个工作流操作可将 ${issueKey} 移到目标状态，请在 Jira 中选择`,
         {
           availableStatuses: availableStatuses.filter(
-            (candidate) => candidate.taskboardStatus === targetStatus,
+            (candidate) => candidate.knotlineStatus === targetStatus,
           ),
         },
       );

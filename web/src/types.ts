@@ -1,72 +1,66 @@
-export const TASK_STATUSES = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "blocked",
-  "done",
-  "canceled",
-] as const;
-export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"] as const;
-
-export type TaskStatus = (typeof TASK_STATUSES)[number];
-export type TaskPriority = (typeof TASK_PRIORITIES)[number];
-export type ActorType = "user" | "agent";
-export type AssigneeTarget = "current-user" | "codex-agent";
-export type IssueRelationType = "parent" | "blocks" | "blocked_by" | "related";
-
 export interface ActorIdentity {
-  type: ActorType;
+  type: "user" | "agent";
   id: string;
   name: string;
   avatarUrl: string | null;
 }
 
-export type DevelopmentContext =
-  | { type: "branch"; branch: string }
-  | { type: "worktree"; path: string; branch: string | null };
-
-export type Recurrence = {
-  interval: number;
-  unit: "day" | "week" | "month" | "year";
-};
-
-export interface DevelopmentScan {
+export interface Project {
+  id: string;
+  name: string;
   workspacePath: string | null;
-  contexts: DevelopmentContext[];
+  source: string;
+  labels: string[];
+  issueCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface TaskboardMetadata {
-  manageTaskboardSkillPath?: string;
-  capabilities?: TaskboardCapabilities;
-  mode?: "local" | "cloud";
-  realtime?: {
-    transport: "poll";
-    intervalMs: number;
-  };
-  localCapabilities?: {
-    available: boolean;
-  };
+export type ProjectMapEntityType =
+  | "project"
+  | "task"
+  | "agent_session"
+  | "agent_profile"
+  | "skill"
+  | "scheduled_trigger"
+  | "demand"
+  | "backlog_pool"
+  | "approval_pool"
+  | "request_artifact"
+  | "workstream"
+  | "review_gate"
+  | "change_request"
+  | "node_run"
+  | "knowledge_asset"
+  | "knowledge_proposal"
+  | "decision"
+  | "rule"
+  | "risk"
+  | "open_question"
+  | "candidate_workstream"
+  | "prompt"
+  | "question"
+  | "constraint"
+  | "background_material"
+  | "notification"
+  | "delivery";
+
+export type MapItemKind = "prompt" | "question" | "constraint" | "background_material";
+
+export interface MapItem {
+  id: string;
+  projectId: string;
+  kind: MapItemKind;
+  title: string;
+  content: string;
+  status: "ready" | "sent";
+  createdBy: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface TaskboardCapabilities {
-  localAiChat: boolean;
-}
-
-export type AiChatSandbox = "read-only" | "workspace-write" | "danger-full-access";
-export type AiChatThreadStatus = "idle" | "running" | "failed";
-export type AiChatRunStatus = "running" | "completed" | "failed" | "interrupted";
-
-export interface AiChatModel {
-  slug: string;
-  displayName: string;
-  description: string;
-  defaultReasoningEffort: string;
-  supportedReasoningEfforts: string[];
-  serviceTiers: Array<{ id: string; name: string }>;
-}
-
-export interface AiChatSkill {
+export interface InstalledSkill {
   id: string;
   label: string;
   description: string;
@@ -74,278 +68,261 @@ export interface AiChatSkill {
   scope: "user" | "repo" | "system" | "admin";
 }
 
-export interface AiChatAttachmentInput {
-  filename: string;
-  contentType: string;
-  dataBase64: string;
-}
-
-export interface AiChatCatalog {
-  models: AiChatModel[];
-  skills: AiChatSkill[];
-  sandboxes: string[];
-}
-
-export interface AiChatOrigin {
-  projectId: string;
-  projectName: string;
-  workspacePath: string;
-  issueId?: string;
-  issueIdentifier?: string;
-}
-
-export interface AiChatRun {
-  id: string;
-  threadId: string;
-  status: AiChatRunStatus;
-  exitCode?: number | null;
-  error?: string | null;
-  startedAt?: string;
-  finishedAt?: string | null;
-}
-
-export interface AiChatTodoProgress {
-  completed: number;
-  total: number;
-  eventId: string;
-  updatedAt: string;
-}
-
-export interface AiChatThread {
-  id: string;
-  title: string;
-  status: AiChatThreadStatus;
-  origin: AiChatOrigin;
-  codexThreadId: string | null;
+export interface ModelSelection {
+  provider: string;
   model: string;
-  reasoningEffort: string;
-  sandbox: AiChatSandbox;
-  createdAt: string;
-  updatedAt: string;
-  currentRun?: AiChatRun | null;
-  latestTodo?: AiChatTodoProgress | null;
+  reasoningEffort?: string;
 }
 
-export interface AiChatEvent {
-  id: string;
-  threadId?: string;
-  runId?: string | null;
-  type: string;
-  role: "user" | "assistant" | "activity" | "error";
-  content: string;
-  data?: Record<string, unknown> | null;
-  createdAt?: string;
-}
-
-export interface AiChatThreadSnapshot {
-  thread: AiChatThread;
-  events: AiChatEvent[];
-  runs: AiChatRun[];
-}
-
-export interface WorkflowCapabilityOption {
-  id: string;
-  label: string;
-  scope: "user" | "repo" | "system" | "admin";
-}
-
-export interface WorkflowMcpServerOption {
-  id: string;
-  label: string;
-  transport: string;
-}
-
-export interface WorkflowCapabilities {
-  skills: WorkflowCapabilityOption[];
-  mcpServers: WorkflowMcpServerOption[];
-}
-
-export interface WorkflowOption {
+export interface ModelReasoningEffort {
   id: string;
   name: string;
+  description?: string;
 }
 
-export interface WorkflowWorkspaceRecord<T = unknown> {
-  projectId: string;
-  workspace: T | null;
-  version: number;
-  updatedAt: string | null;
-}
-
-export interface Project {
+export interface ModelCatalogModel {
   id: string;
   name: string;
-  workspacePath: string | null;
-  source: "local" | "jira";
-  labels: string[];
-  issueCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProjectSummary {
-  projectId: string;
-  summary: string | null;
-  updatedAt: string | null;
-  refreshing: boolean;
-  error: string | null;
-}
-
-export interface TaskRelationSummary {
-  id: string;
-  identifier: string;
-  externalKey?: string | null;
-  projectId: string;
-  title: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  assignee: ActorIdentity;
-  archivedAt: string | null;
-}
-
-export interface TaskRelations {
-  parent: TaskRelationSummary | null;
-  subIssues: TaskRelationSummary[];
-  blockedBy: TaskRelationSummary[];
-  blocks: TaskRelationSummary[];
-  related: TaskRelationSummary[];
-}
-
-export interface TaskConversationRef {
-  threadId: string;
-  source: "task" | "comment";
-  sourceId: string;
-  title: string;
-  updatedAt: string;
-}
-
-export interface Task {
-  id: string;
-  identifier: string;
-  projectId: string;
-  title: string;
-  description: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  labels: string[];
-  sortOrder: number;
-  threadId: string | null;
-  conversationRefs: TaskConversationRef[];
-  participants: ActorIdentity[];
-  previewImage: Attachment | null;
-  activityKey: string;
-  activityUpdatedAt: string;
-  creatorType: ActorType;
-  creatorId: string;
-  creatorName: string;
-  creatorAvatarUrl: string | null;
-  assignee: ActorIdentity;
-  workflowId: string | null;
-  developmentContext: DevelopmentContext | null;
-  startDate: string | null;
-  dueDate: string | null;
-  recurrence: Recurrence | null;
-  source: "local" | "jira";
-  externalOrigin?: string | null;
-  externalKey?: string | null;
-  externalUrl: string | null;
-  archivedAt: string | null;
-  relations: TaskRelations;
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface JiraConnection {
-  configured: boolean;
-  baseUrl: string | null;
-  username: string | null;
-  displayName: string | null;
-  projects: string[];
-  projectId: string;
-  lastSyncedAt: string | null;
-  insecureHttp: boolean;
-}
-
-export interface Comment {
-  id: string;
-  taskId: string;
-  body: string;
-  authorType: ActorType;
-  authorId: string;
-  authorName: string;
-  authorAvatarUrl: string | null;
-  threadId: string | null;
-  attachments: Attachment[];
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface TaskActivityChange {
-  field: string;
-  before: unknown;
-  after: unknown;
-}
-
-export interface TaskChangeActivity {
-  id: string;
-  taskId: string;
-  actorType: ActorType;
-  actorId: string;
-  actorName: string;
-  actorAvatarUrl: string | null;
-  changes: TaskActivityChange[];
-  createdAt: string;
-}
-
-export interface Attachment {
-  id: string;
-  taskId: string;
-  commentId: string | null;
-  filename: string;
-  contentType: string;
-  size: number;
-  createdAt: string;
-}
-
-export interface HostContext {
-  user?: ActorIdentity;
-  language?: string;
-  workspacePath?: string;
-  threadId?: string;
-  theme?: "light" | "dark";
-  projectId?: string;
-  projects?: Array<{ id: string; name: string }>;
-  titlebarLeftInset?: number;
-  sidebarCollapsed?: boolean;
-  threadRunning?: boolean;
-  threadTodoProgress?: {
-    completed: number;
-    total: number;
+  description?: string;
+  reasoning?: {
+    efforts: ModelReasoningEffort[];
+    defaultEffort?: string;
   };
 }
 
-export interface TaskDraft {
-  title: string;
-  description: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  labels: string[];
-  assigneeTarget?: AssigneeTarget;
-  developmentContext: DevelopmentContext | null;
-  startDate: string | null;
-  dueDate: string | null;
-  recurrence: Recurrence | null;
+export interface ModelProviderGroup {
+  id: string;
+  name: string;
+  models: ModelCatalogModel[];
 }
 
-export interface TaskEvent {
-  type: string;
-  projectId?: string;
-  taskId?: string;
-  task?: Task;
-  comment?: Comment;
-  attachment?: Attachment;
-  project?: Project;
-  at: string;
+export interface GlobalModelDirectory {
+  current: ModelSelection;
+  groups: ModelProviderGroup[];
+  failures: Array<{ id: string; name: string; message: string }>;
+}
+
+export interface SkillNode {
+  id: string;
+  projectId: string;
+  skillId: string;
+  label: string;
+  description: string;
+  scope: string;
+  createdBy: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduledTrigger {
+  id: string;
+  projectId: string;
+  prompt: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  lastTriggeredAt: string | null;
+  nextTriggerAt: string | null;
+  createdBy: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectMapNodeData {
+  title: string;
+  subtitle: string;
+  status: string;
+  kind: string;
+  entityVersion: number | null;
+  sessionState?: string;
+  live?: boolean;
+  role?: string;
+  skillId?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface ProjectMapNode {
+  id: string;
+  projectId: string;
+  entityType: ProjectMapEntityType;
+  entityId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  collapsed: boolean;
+  layer: string;
+  zIndex: number;
+  version: number;
+  data: ProjectMapNodeData;
+}
+
+export interface ProjectMapEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: ProjectMapHandle | null;
+  targetHandle?: ProjectMapHandle | null;
+  relationType: string;
+  label: string;
+  projected: boolean;
+}
+
+export type ProjectMapHandle = "left" | "right";
+
+export interface ProjectMapConnectionHandles {
+  sourceHandle: ProjectMapHandle | null;
+  targetHandle: ProjectMapHandle | null;
+}
+
+export interface ProjectCanvas {
+  id: string;
+  projectId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectMapSnapshot {
+  project: Project;
+  canvas: ProjectCanvas;
+  nodes: ProjectMapNode[];
+  edges: ProjectMapEdge[];
+  generatedAt: string;
+}
+
+export type IssueRelationType = "parent" | "blocks" | "blocked_by" | "related";
+
+export interface GraphRelationCandidate {
+  id: string;
+  label: string;
+  labelEn: string;
+  relationType: string;
+  actionType: string;
+  taskRelationType?: IssueRelationType;
+  input?: Record<string, unknown>;
+}
+
+export interface GraphComposeResolution {
+  mode: "compose";
+  source: { id: string; entityType: ProjectMapEntityType; title: string };
+  target: { id: string; entityType: ProjectMapEntityType; title: string };
+  candidates: GraphRelationCandidate[];
+}
+
+export interface GraphDirectResolution {
+  mode: "direct";
+  source: { id: string; entityType: ProjectMapEntityType; title: string };
+  target: { id: string; entityType: ProjectMapEntityType; title: string };
+  action: {
+    actionType: string;
+    label: string;
+    labelEn: string;
+    input: Record<string, unknown>;
+  };
+}
+
+export interface GraphUnsupportedResolution {
+  mode: "unsupported";
+  source: { id: string; entityType: ProjectMapEntityType; title: string };
+  target: { id: string; entityType: ProjectMapEntityType; title: string };
+  message: string;
+}
+
+export type GraphActionResolution = GraphComposeResolution | GraphDirectResolution | GraphUnsupportedResolution;
+
+export interface AgentProfile {
+  id: string;
+  projectId: string;
+  name: string;
+  role: "leader" | "executor" | "reviewer" | "approver" | "observer";
+  skillId: string | null;
+  provider: string | null;
+  model: string | null;
+  status: "offline" | "idle" | "working" | "waiting" | "blocked" | "paused";
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Demand {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  classification: "unclassified" | "context" | "question" | "complex" | "debug";
+  status: "new" | "contextualized" | "intake" | "planned" | "change_requested";
+  createdBy: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BacklogPool {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "active" | "paused";
+  createdBy: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApprovalPool {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "active" | "paused";
+  createdBy: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GraphCommand {
+  id: string;
+  projectId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  actionType: string;
+  requestedBy: string;
+  idempotencyKey: string;
+  status: "pending" | "completed" | "failed";
+  input: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface NotificationRecipient {
+  type: "user" | "agent";
+  id: string;
+  readAt: string | null;
+  handledAt: string | null;
+  version: number;
+}
+
+export interface ProjectNotification {
+  id: string;
+  projectId: string;
+  eventId: string;
+  eventType: string;
+  actor: ActorIdentity;
+  title: string;
+  body: string;
+  reason: string;
+  graphNodeId: string;
+  dueAt: string | null;
+  impact: string;
+  actions: string[];
+  context: Record<string, unknown>;
+  recipients: NotificationRecipient[];
+  read: boolean;
+  handled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }

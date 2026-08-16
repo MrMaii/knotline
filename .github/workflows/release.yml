@@ -1,23 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
-# Extensively modified for Knotline in 2026; see PROVENANCE.md.
 
-name: Check
+name: Release
 
 on:
-  pull_request:
   push:
-    branches: [main]
-  workflow_dispatch:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
+  id-token: write # required for npm provenance
 
 concurrency:
-  group: check-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  check:
+  publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,6 +27,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          registry-url: https://registry.npmjs.org
       - run: npm ci --ignore-scripts
       - run: npm run check
-      - run: npm run pack:check
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

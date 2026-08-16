@@ -26,7 +26,7 @@ export function normalizeCloudUrl(value) {
   try {
     url = new URL(value);
   } catch {
-    throw new CloudConfigError("INVALID_CLOUD_URL", "Cloud taskboard URL must be a valid URL");
+    throw new CloudConfigError("INVALID_CLOUD_URL", "Cloud knotline URL must be a valid URL");
   }
   const isLoopback = url.hostname === "localhost"
     || url.hostname === "127.0.0.1"
@@ -41,7 +41,7 @@ export function normalizeCloudUrl(value) {
   ) {
     throw new CloudConfigError(
       "INVALID_CLOUD_URL",
-      "Cloud taskboard URL must be an HTTPS origin (loopback HTTP is allowed for development)",
+      "Cloud knotline URL must be an HTTPS origin (loopback HTTP is allowed for development)",
     );
   }
   return url.origin;

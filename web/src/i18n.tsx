@@ -1,15 +1,14 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { TaskPriority, TaskStatus } from "./types";
 
-export type TaskboardLanguage = "zh" | "en";
+export type KnotlineLanguage = "zh" | "en";
 
-interface TaskboardI18n {
-  language: TaskboardLanguage;
+interface KnotlineI18n {
+  language: KnotlineLanguage;
   locale: "zh-CN" | "en";
   text: (chinese: string, english: string) => string;
 }
 
-const I18N: Record<TaskboardLanguage, TaskboardI18n> = {
+const I18N: Record<KnotlineLanguage, KnotlineI18n> = {
   zh: {
     language: "zh",
     locale: "zh-CN",
@@ -22,77 +21,31 @@ const I18N: Record<TaskboardLanguage, TaskboardI18n> = {
   },
 };
 
-const STATUS_LABELS: Record<TaskboardLanguage, Record<TaskStatus, string>> = {
-  zh: {
-    backlog: "待立项",
-    todo: "等待认领",
-    in_progress: "处理中",
-    in_review: "等你确认",
-    blocked: "遇到阻碍",
-    done: "完成",
-    canceled: "取消",
-  },
-  en: {
-    backlog: "Backlog",
-    todo: "To do",
-    in_progress: "In progress",
-    in_review: "In review",
-    blocked: "Blocked",
-    done: "Done",
-    canceled: "Canceled",
-  },
-};
+const KnotlineLanguageContext = createContext<KnotlineLanguage>("en");
 
-const PRIORITY_LABELS: Record<TaskboardLanguage, Record<TaskPriority, string>> = {
-  zh: {
-    none: "无优先级",
-    urgent: "紧急",
-    high: "高",
-    medium: "中",
-    low: "低",
-  },
-  en: {
-    none: "No priority",
-    urgent: "Urgent",
-    high: "High",
-    medium: "Medium",
-    low: "Low",
-  },
-};
-
-const TaskboardLanguageContext = createContext<TaskboardLanguage>("en");
-
-export function resolveTaskboardLanguage(value: string | null | undefined): TaskboardLanguage {
+export function resolveKnotlineLanguage(value: string | null | undefined): KnotlineLanguage {
   const normalized = value?.trim().replaceAll("_", "-").toLowerCase() ?? "";
   return normalized === "zh" || normalized.startsWith("zh-") ? "zh" : "en";
 }
 
-export function getTaskboardI18n(language: TaskboardLanguage): TaskboardI18n {
+export function getKnotlineI18n(language: KnotlineLanguage): KnotlineI18n {
   return I18N[language];
 }
 
-export function taskStatusLabel(language: TaskboardLanguage, status: TaskStatus): string {
-  return STATUS_LABELS[language][status];
-}
-
-export function taskPriorityLabel(language: TaskboardLanguage, priority: TaskPriority): string {
-  return PRIORITY_LABELS[language][priority];
-}
-
-export function TaskboardLanguageProvider({
+export function KnotlineLanguageProvider({
   language,
   children,
 }: {
-  language: TaskboardLanguage;
+  language: KnotlineLanguage;
   children: ReactNode;
 }) {
   return (
-    <TaskboardLanguageContext.Provider value={language}>
+    <KnotlineLanguageContext.Provider value={language}>
       {children}
-    </TaskboardLanguageContext.Provider>
+    </KnotlineLanguageContext.Provider>
   );
 }
 
-export function useTaskboardI18n(): TaskboardI18n {
-  return I18N[useContext(TaskboardLanguageContext)];
+export function useKnotlineI18n(): KnotlineI18n {
+  return I18N[useContext(KnotlineLanguageContext)];
 }

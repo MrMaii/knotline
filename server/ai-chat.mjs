@@ -42,7 +42,7 @@ export class AiChatService {
     this.database = options.database;
     this.codexExecutable = options.codexExecutable;
     this.codexStatePath = options.codexStatePath;
-    this.manageTaskboardSkillPath = options.manageTaskboardSkillPath;
+    this.manageKnotlineSkillPath = options.manageKnotlineSkillPath;
     this.processEnv = options.processEnv ?? process.env;
     this.killGraceMs = options.killGraceMs ?? 1_000;
     this.resolveContext = options.resolveContext ?? (async (projectId, issueId) => {
@@ -239,7 +239,7 @@ export class AiChatService {
     const skillIds = input.skillIds ?? [];
     const availableSkills = new Map(
       catalog.skills
-        .filter((skill) => skill.id !== "manage-taskboard")
+        .filter((skill) => skill.id !== "manage-knotline")
         .map((skill) => [skill.id, skill]),
     );
     for (const skillId of skillIds) {
@@ -264,7 +264,7 @@ export class AiChatService {
           skills: selectedSkills,
           attachmentPaths,
         },
-        this.manageTaskboardSkillPath,
+        this.manageKnotlineSkillPath,
       );
       const run = this.database.createAiChatRun({ threadId });
       this.#emit(threadId, { type: "ai.run", run });
@@ -484,7 +484,7 @@ export class AiChatService {
       return { temporaryDirectory: null, attachmentPaths: [], imagePaths: [] };
     }
     const temporaryDirectory = await mkdtemp(
-      path.join(os.tmpdir(), "codex-taskboard-ai-turn-"),
+      path.join(os.tmpdir(), "knotline-ai-turn-"),
     );
     try {
       const attachmentPaths = [];

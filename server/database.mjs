@@ -31,6 +31,47 @@ function commentConversationTitle(body) {
   return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact;
 }
 
+function threadBindingFromRow(row) {
+  if (
+    !row.thread_id
+    || !row.thread_codex_project_id
+    || !row.thread_codex_project_kind
+    || !row.thread_codex_host_id
+    || !row.thread_workspace_path
+  ) return null;
+  return {
+    threadId: row.thread_id,
+    codexProjectId: row.thread_codex_project_id,
+    codexProjectKind: row.thread_codex_project_kind,
+    codexHostId: row.thread_codex_host_id,
+    workspacePath: row.thread_workspace_path,
+  };
+}
+
+function legacyLocalThreadIdFromRow(row) {
+  if (!row.thread_id) return null;
+  return [
+    row.thread_codex_project_id,
+    row.thread_codex_project_kind,
+    row.thread_codex_host_id,
+    row.thread_workspace_path,
+  ].every((value) => value == null)
+    ? row.thread_id
+    : null;
+}
+
+function storedThreadBinding(threadBinding, threadId) {
+  if (threadBinding === undefined && (threadId === undefined || threadId === null)) return undefined;
+  const binding = threadBinding === undefined ? { threadId } : threadBinding;
+  return [
+    binding?.threadId ?? null,
+    binding?.codexProjectId ?? null,
+    binding?.codexProjectKind ?? null,
+    binding?.codexHostId ?? null,
+    binding?.workspacePath ?? null,
+  ];
+}
+
 function attachTaskActivity(task, comments, activities, previewImage = null) {
   const orderedComments = [...comments].sort((left, right) => (
     left.id.localeCompare(right.id)
@@ -70,9 +111,18 @@ function attachTaskActivity(task, comments, activities, previewImage = null) {
     });
   }
   const conversationRefs = [];
-  if (task.threadId) {
+  if (task.threadBinding) {
     conversationRefs.push({
-      threadId: task.threadId,
+      ...task.threadBinding,
+      source: "task",
+      sourceId: task.id,
+      title: task.title,
+      updatedAt: task.updatedAt,
+    });
+  } else if (task.legacyLocalThreadId) {
+    conversationRefs.push({
+      threadId: task.legacyLocalThreadId,
+      legacyLocal: true,
       source: "task",
       sourceId: task.id,
       title: task.title,
@@ -80,14 +130,17 @@ function attachTaskActivity(task, comments, activities, previewImage = null) {
     });
   }
   for (const comment of orderedComments) {
-    if (!comment.thread_id) continue;
-    conversationRefs.push({
-      threadId: comment.thread_id,
-      source: "comment",
-      sourceId: comment.id,
-      title: commentConversationTitle(comment.body),
-      updatedAt: comment.updated_at,
-    });
+    const threadBinding = threadBindingFromRow(comment);
+    const legacyLocalThreadId = legacyLocalThreadIdFromRow(comment);
+    if (threadBinding || legacyLocalThreadId) {
+      conversationRefs.push({
+        ...(threadBinding ?? { threadId: legacyLocalThreadId, legacyLocal: true }),
+        source: "comment",
+        sourceId: comment.id,
+        title: commentConversationTitle(comment.body),
+        updatedAt: comment.updated_at,
+      });
+    }
   }
 
   task.conversationRefs = conversationRefs;
@@ -177,6 +230,8 @@ function taskFromRow(row) {
     labels: JSON.parse(row.labels),
     sortOrder: row.sort_order,
     threadId: row.thread_id,
+    threadBinding: threadBindingFromRow(row),
+    legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
     creatorType: row.creator_type,
     creatorId: row.creator_id,
     creatorName: row.creator_name,
@@ -200,6 +255,405 @@ function taskFromRow(row) {
     externalUrl: row.external_url ?? null,
     archivedAt: row.archived_at,
     version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function graphNodeFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    x: row.x,
+    y: row.y,
+    width: row.width,
+    height: row.height,
+    collapsed: row.collapsed === 1,
+    layer: row.layer,
+    zIndex: row.z_index,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function projectCanvasFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function canvasNodeFromRow(row) {
+  return {
+    projectId: row.project_id,
+    canvasId: row.canvas_id,
+    nodeId: row.node_id,
+    visible: row.visible === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function graphEdgeFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    sourceNodeId: row.source_node_id,
+    targetNodeId: row.target_node_id,
+    relationType: row.relation_type,
+    state: row.state,
+    metadata: JSON.parse(row.metadata),
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function graphCommandFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    sourceNodeId: row.source_node_id,
+    targetNodeId: row.target_node_id,
+    actionType: row.action_type,
+    requestedBy: row.requested_by,
+    idempotencyKey: row.idempotency_key,
+    status: row.status,
+    input: JSON.parse(row.input),
+    result: row.result === null ? null : JSON.parse(row.result),
+    error: row.error,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function mapItemFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    kind: row.kind,
+    title: row.title,
+    content: row.content,
+    status: row.status,
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function skillNodeFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    skillId: row.skill_id,
+    label: row.label,
+    description: row.description,
+    scope: row.scope,
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function scheduledTriggerFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    prompt: row.prompt,
+    intervalMinutes: row.interval_minutes,
+    enabled: row.enabled === 1,
+    lastTriggeredAt: row.last_triggered_at,
+    nextTriggerAt: row.next_trigger_at,
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function agentProfileFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    role: row.role,
+    skillId: row.skill_id,
+    provider: row.provider,
+    model: row.model,
+    status: row.status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function agentTeamMembershipFromRow(row) {
+  return {
+    teamAgentId: row.team_agent_id,
+    memberAgentId: row.member_agent_id,
+    position: row.position,
+    createdAt: row.created_at,
+  };
+}
+
+function agentRuntimeBindingFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    agentProfileId: row.agent_profile_id,
+    sessionId: row.session_id,
+    currentNodeRunId: row.current_node_run_id,
+    status: row.status,
+    lastError: row.last_error,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function nodeRunFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workstreamId: row.workstream_id,
+    taskId: row.task_id,
+    agentProfileId: row.agent_profile_id,
+    sessionId: row.session_id,
+    parentRunId: row.parent_run_id,
+    status: row.status,
+    instruction: row.instruction,
+    result: row.result === null ? null : JSON.parse(row.result),
+    error: row.error,
+    version: row.version,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function demandFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    description: row.description,
+    acceptanceCriteria: JSON.parse(row.acceptance_criteria),
+    classification: row.classification ?? "unclassified",
+    status: row.status,
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function backlogPoolFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    status: row.status,
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function approvalPoolFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    status: row.status,
+    createdBy: row.created_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function requestArtifactFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    demandId: row.demand_id,
+    agentProfileId: row.agent_profile_id,
+    nodeRunId: row.node_run_id,
+    kind: row.kind,
+    title: row.title,
+    content: row.content,
+    status: row.status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function workstreamFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    demandId: row.demand_id,
+    leaderAgentId: row.leader_agent_id,
+    reviewerAgentId: row.reviewer_agent_id,
+    title: row.title,
+    goal: row.goal,
+    scope: JSON.parse(row.scope),
+    exclusions: JSON.parse(row.exclusions),
+    risks: JSON.parse(row.risks),
+    dependencies: JSON.parse(row.dependencies),
+    acceptanceCriteria: JSON.parse(row.acceptance_criteria),
+    deliverables: JSON.parse(row.deliverables),
+    status: row.status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function reviewGateFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workstreamId: row.workstream_id,
+    nodeRunId: row.node_run_id ?? null,
+    purpose: row.purpose ?? "workstream",
+    reviewerAgentId: row.reviewer_agent_id,
+    status: row.status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function deliveryFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workstreamId: row.workstream_id,
+    nodeRunId: row.node_run_id,
+    taskId: row.task_id,
+    reviewerAgentId: row.reviewer_agent_id,
+    summary: row.summary,
+    evidence: row.evidence,
+    createdAt: row.created_at,
+  };
+}
+
+function knowledgeAssetFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    kind: row.kind ?? "project_knowledge",
+    sourceDemandId: row.source_demand_id ?? null,
+    currentVersion: row.current_version,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function knowledgeVersionFromRow(row) {
+  return {
+    id: row.id,
+    assetId: row.asset_id,
+    versionNumber: row.version_number,
+    content: row.content,
+    sourceDeliveryId: row.source_delivery_id,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function knowledgeBindingFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    assetId: row.asset_id,
+    agentProfileId: row.agent_profile_id,
+    boundVersion: row.bound_version,
+    status: row.status,
+    syncTaskId: row.sync_task_id,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function knowledgeProposalFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    assetId: row.asset_id,
+    deliveryId: row.delivery_id,
+    title: row.title,
+    content: row.content,
+    status: row.status,
+    proposedBy: row.proposed_by,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function changeRequestFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workstreamId: row.workstream_id,
+    demandId: row.demand_id,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function domainEventFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    eventType: row.event_type,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    actor: row.actor,
+    payload: JSON.parse(row.payload),
+    createdAt: row.created_at,
+  };
+}
+
+function notificationFromRow(row, recipients) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    eventId: row.event_id,
+    eventType: row.event_type,
+    actor: JSON.parse(row.actor),
+    title: row.title,
+    body: row.body,
+    reason: row.reason,
+    graphNodeId: row.graph_node_id,
+    dueAt: row.due_at,
+    impact: row.impact,
+    actions: JSON.parse(row.actions),
+    context: JSON.parse(row.context),
+    recipients,
+    read: recipients.some((recipient) => recipient.readAt !== null),
+    handled: recipients.some((recipient) => recipient.handledAt !== null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -230,6 +684,8 @@ function commentFromRow(row) {
     taskId: row.task_id,
     body: row.body,
     threadId: row.thread_id,
+    threadBinding: threadBindingFromRow(row),
+    legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
     authorType: row.author_type,
     authorId: row.author_id,
     authorName: row.author_name,
@@ -338,7 +794,7 @@ function projectPrefix(projectId) {
   return (prefix || "TASK").slice(0, 12);
 }
 
-export class TaskboardDatabase {
+export class KnotlineDatabase {
   constructor(filename) {
     mkdirSync(path.dirname(filename), { recursive: true });
     this.database = new DatabaseSync(filename);
@@ -372,6 +828,10 @@ export class TaskboardDatabase {
         labels TEXT NOT NULL DEFAULT '[]',
         sort_order REAL NOT NULL,
         thread_id TEXT,
+        thread_codex_project_id TEXT,
+        thread_codex_project_kind TEXT,
+        thread_codex_host_id TEXT,
+        thread_workspace_path TEXT,
         creator_type TEXT NOT NULL DEFAULT 'user',
         creator_id TEXT NOT NULL DEFAULT 'local-user',
         creator_name TEXT NOT NULL DEFAULT '本地用户',
@@ -407,6 +867,10 @@ export class TaskboardDatabase {
         task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         body TEXT NOT NULL,
         thread_id TEXT,
+        thread_codex_project_id TEXT,
+        thread_codex_project_kind TEXT,
+        thread_codex_host_id TEXT,
+        thread_workspace_path TEXT,
         author_type TEXT NOT NULL DEFAULT 'user',
         author_id TEXT NOT NULL,
         author_name TEXT NOT NULL,
@@ -452,6 +916,471 @@ export class TaskboardDatabase {
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS project_canvases (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS project_canvases_project_created
+        ON project_canvases(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS canvas_nodes (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        canvas_id TEXT NOT NULL REFERENCES project_canvases(id) ON DELETE CASCADE,
+        node_id TEXT NOT NULL,
+        visible INTEGER NOT NULL DEFAULT 1 CHECK (visible IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (canvas_id, node_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS canvas_nodes_project_node
+        ON canvas_nodes(project_id, node_id, canvas_id);
+
+      CREATE TABLE IF NOT EXISTS graph_nodes (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        x REAL NOT NULL,
+        y REAL NOT NULL,
+        width REAL NOT NULL,
+        height REAL NOT NULL,
+        collapsed INTEGER NOT NULL DEFAULT 0 CHECK (collapsed IN (0, 1)),
+        layer TEXT NOT NULL,
+        z_index INTEGER NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (project_id, entity_type, entity_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS graph_nodes_project_layer
+        ON graph_nodes(project_id, layer, z_index);
+
+      CREATE TABLE IF NOT EXISTS graph_edges (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        source_node_id TEXT NOT NULL,
+        target_node_id TEXT NOT NULL,
+        relation_type TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'active',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (source_node_id <> target_node_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS graph_edges_project_source
+        ON graph_edges(project_id, source_node_id, target_node_id);
+
+      CREATE TABLE IF NOT EXISTS graph_commands (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        source_node_id TEXT NOT NULL,
+        target_node_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
+        input TEXT NOT NULL,
+        result TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        UNIQUE (project_id, idempotency_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS graph_commands_project_created
+        ON graph_commands(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS map_items (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('prompt', 'question', 'constraint', 'background_material')),
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'sent')),
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS map_items_project_kind
+        ON map_items(project_id, kind, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS skill_nodes (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        skill_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        description TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (project_id, skill_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS skill_nodes_project_created
+        ON skill_nodes(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS scheduled_triggers (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        prompt TEXT NOT NULL,
+        interval_minutes INTEGER NOT NULL CHECK (interval_minutes > 0),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        last_triggered_at TEXT,
+        next_trigger_at TEXT,
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS scheduled_triggers_due
+        ON scheduled_triggers(enabled, next_trigger_at, project_id);
+
+      CREATE TABLE IF NOT EXISTS agent_profiles (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('leader', 'executor', 'reviewer', 'approver', 'observer')),
+        skill_id TEXT,
+        provider TEXT,
+        model TEXT,
+        status TEXT NOT NULL CHECK (status IN ('offline', 'idle', 'working', 'waiting', 'blocked', 'paused')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS agent_profiles_project_role
+        ON agent_profiles(project_id, role, created_at);
+
+      CREATE TABLE IF NOT EXISTS agent_team_members (
+        team_agent_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+        member_agent_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (team_agent_id, member_agent_id),
+        CHECK (team_agent_id <> member_agent_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS agent_team_members_member
+        ON agent_team_members(member_agent_id, team_agent_id);
+
+      CREATE TABLE IF NOT EXISTS demands (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        acceptance_criteria TEXT NOT NULL DEFAULT '[]',
+        classification TEXT NOT NULL DEFAULT 'unclassified' CHECK (
+          classification IN ('unclassified', 'context', 'question', 'complex', 'debug')
+        ),
+        status TEXT NOT NULL CHECK (status IN ('new', 'contextualized', 'intake', 'planned', 'change_requested')),
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS demands_project_created
+        ON demands(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS backlog_pools (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS backlog_pools_project_created
+        ON backlog_pools(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS approval_pools (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+        created_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS approval_pools_project_created
+        ON approval_pools(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS workstreams (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        demand_id TEXT REFERENCES demands(id),
+        leader_agent_id TEXT REFERENCES agent_profiles(id),
+        reviewer_agent_id TEXT REFERENCES agent_profiles(id),
+        title TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        exclusions TEXT NOT NULL,
+        risks TEXT NOT NULL,
+        dependencies TEXT NOT NULL,
+        acceptance_criteria TEXT NOT NULL,
+        deliverables TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN (
+          'intake', 'draft', 'review', 'approved', 'staffed', 'executing', 'acceptance', 'delivered', 'archived'
+        )),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS workstreams_project_status
+        ON workstreams(project_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS review_gates (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        workstream_id TEXT REFERENCES workstreams(id) ON DELETE CASCADE,
+        reviewer_agent_id TEXT REFERENCES agent_profiles(id),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS review_gates_project_status
+        ON review_gates(project_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS review_decisions (
+        id TEXT PRIMARY KEY,
+        review_gate_id TEXT NOT NULL REFERENCES review_gates(id) ON DELETE CASCADE,
+        decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+        comment TEXT NOT NULL,
+        decided_by TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS change_requests (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
+        node_run_id TEXT REFERENCES node_runs(id) ON DELETE CASCADE,
+        purpose TEXT NOT NULL DEFAULT 'workstream' CHECK (purpose IN ('workstream', 'execution')),
+        demand_id TEXT NOT NULL REFERENCES demands(id),
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('open', 'approved', 'rejected', 'applied')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS change_requests_project_status
+        ON change_requests(project_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS agent_runtime_bindings (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+        session_id TEXT UNIQUE,
+        current_node_run_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('offline', 'idle', 'working', 'waiting', 'blocked', 'paused')),
+        last_error TEXT,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (project_id, agent_profile_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS agent_runtime_bindings_project_status
+        ON agent_runtime_bindings(project_id, status, updated_at);
+
+      CREATE TABLE IF NOT EXISTS node_runs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id),
+        session_id TEXT,
+        parent_run_id TEXT REFERENCES node_runs(id),
+        status TEXT NOT NULL CHECK (status IN (
+          'queued', 'running', 'waiting_input', 'waiting_review', 'changes_requested',
+          'approved', 'failed', 'canceled', 'completed'
+        )),
+        instruction TEXT NOT NULL,
+        result TEXT,
+        error TEXT,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS node_runs_project_status_created
+        ON node_runs(project_id, status, created_at, id);
+
+      CREATE INDEX IF NOT EXISTS node_runs_agent_created
+        ON node_runs(agent_profile_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS request_artifacts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        demand_id TEXT NOT NULL REFERENCES demands(id) ON DELETE CASCADE,
+        agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id),
+        node_run_id TEXT NOT NULL REFERENCES node_runs(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('answer', 'review_feedback', 'plan')),
+        title TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'generating' CHECK (status IN ('generating', 'ready', 'failed')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (node_run_id, kind)
+      );
+
+      CREATE INDEX IF NOT EXISTS request_artifacts_project_created
+        ON request_artifacts(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS deliveries (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
+        node_run_id TEXT NOT NULL REFERENCES node_runs(id),
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        reviewer_agent_id TEXT NOT NULL REFERENCES agent_profiles(id),
+        summary TEXT NOT NULL,
+        evidence TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (node_run_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS deliveries_project_created
+        ON deliveries(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS knowledge_assets (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'project_knowledge' CHECK (kind IN ('project_knowledge', 'context_document')),
+        source_demand_id TEXT REFERENCES demands(id) ON DELETE SET NULL,
+        current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS knowledge_assets_project_created
+        ON knowledge_assets(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS knowledge_versions (
+        id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL REFERENCES knowledge_assets(id) ON DELETE CASCADE,
+        version_number INTEGER NOT NULL CHECK (version_number > 0),
+        content TEXT NOT NULL,
+        source_delivery_id TEXT REFERENCES deliveries(id),
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (asset_id, version_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS knowledge_bindings (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        asset_id TEXT NOT NULL REFERENCES knowledge_assets(id) ON DELETE CASCADE,
+        agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+        bound_version INTEGER NOT NULL CHECK (bound_version > 0),
+        status TEXT NOT NULL CHECK (status IN ('current', 'stale', 'syncing')),
+        sync_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (asset_id, agent_profile_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS knowledge_bindings_project_status
+        ON knowledge_bindings(project_id, status, updated_at);
+
+      CREATE TABLE IF NOT EXISTS knowledge_update_proposals (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        asset_id TEXT NOT NULL REFERENCES knowledge_assets(id) ON DELETE CASCADE,
+        delivery_id TEXT REFERENCES deliveries(id),
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+        proposed_by TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS knowledge_proposals_project_status
+        ON knowledge_update_proposals(project_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS domain_events (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS domain_events_project_created
+        ON domain_events(project_id, created_at, id);
+
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        event_id TEXT NOT NULL REFERENCES domain_events(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        graph_node_id TEXT NOT NULL,
+        due_at TEXT,
+        impact TEXT NOT NULL,
+        actions TEXT NOT NULL,
+        context TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (project_id, dedupe_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS notifications_project_created
+        ON notifications(project_id, created_at DESC, id);
+
+      CREATE TABLE IF NOT EXISTS notification_recipients (
+        notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+        recipient_type TEXT NOT NULL CHECK (recipient_type IN ('user', 'agent')),
+        recipient_id TEXT NOT NULL,
+        read_at TEXT,
+        handled_at TEXT,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        PRIMARY KEY (notification_id, recipient_type, recipient_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS notification_recipients_recipient
+        ON notification_recipients(recipient_type, recipient_id, read_at, handled_at);
 
       CREATE TABLE IF NOT EXISTS project_summaries (
         project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
@@ -518,9 +1447,46 @@ export class TaskboardDatabase {
 
     `);
 
+    this.#migrateNodeRuns();
+
+    const demandColumns = this.database.prepare("PRAGMA table_info(demands)").all();
+    if (!demandColumns.some((column) => column.name === "classification")) {
+      this.database.exec("ALTER TABLE demands ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified'");
+    }
+    this.#migrateDemandContext();
+
+    const knowledgeAssetColumns = this.database.prepare("PRAGMA table_info(knowledge_assets)").all();
+    if (!knowledgeAssetColumns.some((column) => column.name === "kind")) {
+      this.database.exec("ALTER TABLE knowledge_assets ADD COLUMN kind TEXT NOT NULL DEFAULT 'project_knowledge'");
+    }
+    if (!knowledgeAssetColumns.some((column) => column.name === "source_demand_id")) {
+      this.database.exec("ALTER TABLE knowledge_assets ADD COLUMN source_demand_id TEXT REFERENCES demands(id) ON DELETE SET NULL");
+    }
+    this.database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS knowledge_assets_source_demand
+      ON knowledge_assets(source_demand_id)
+      WHERE source_demand_id IS NOT NULL
+    `);
+
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all();
     if (!projectColumns.some((column) => column.name === "workspace_path")) {
       this.database.exec("ALTER TABLE projects ADD COLUMN workspace_path TEXT");
+    }
+
+    const agentProfileColumns = this.database.prepare("PRAGMA table_info(agent_profiles)").all();
+    if (!agentProfileColumns.some((column) => column.name === "provider")) {
+      this.database.exec("ALTER TABLE agent_profiles ADD COLUMN provider TEXT");
+    }
+    if (!agentProfileColumns.some((column) => column.name === "model")) {
+      this.database.exec("ALTER TABLE agent_profiles ADD COLUMN model TEXT");
+    }
+
+    const reviewGateColumns = this.database.prepare("PRAGMA table_info(review_gates)").all();
+    if (!reviewGateColumns.some((column) => column.name === "node_run_id")) {
+      this.database.exec("ALTER TABLE review_gates ADD COLUMN node_run_id TEXT REFERENCES node_runs(id) ON DELETE CASCADE");
+    }
+    if (!reviewGateColumns.some((column) => column.name === "purpose")) {
+      this.database.exec("ALTER TABLE review_gates ADD COLUMN purpose TEXT NOT NULL DEFAULT 'workstream'");
     }
 
     const taskColumns = this.database.prepare("PRAGMA table_info(tasks)").all();
@@ -528,6 +1494,16 @@ export class TaskboardDatabase {
     const hasLinkedThreadId = taskColumns.some((column) => column.name === "linked_thread_id");
     if (!hasThreadId) {
       this.database.exec("ALTER TABLE tasks ADD COLUMN thread_id TEXT");
+    }
+    for (const column of [
+      "thread_codex_project_id",
+      "thread_codex_project_kind",
+      "thread_codex_host_id",
+      "thread_workspace_path",
+    ]) {
+      if (!taskColumns.some((candidate) => candidate.name === column)) {
+        this.database.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
+      }
     }
     if (hasLinkedThreadId) {
       this.database.exec(`
@@ -682,6 +1658,16 @@ export class TaskboardDatabase {
     if (!commentColumns.some((column) => column.name === "thread_id")) {
       this.database.exec("ALTER TABLE comments ADD COLUMN thread_id TEXT");
     }
+    for (const column of [
+      "thread_codex_project_id",
+      "thread_codex_project_kind",
+      "thread_codex_host_id",
+      "thread_workspace_path",
+    ]) {
+      if (!commentColumns.some((candidate) => candidate.name === column)) {
+        this.database.exec(`ALTER TABLE comments ADD COLUMN ${column} TEXT`);
+      }
+    }
     if (!commentColumns.some((column) => column.name === "author_type")) {
       this.database.exec("ALTER TABLE comments ADD COLUMN author_type TEXT NOT NULL DEFAULT 'user'");
     }
@@ -746,6 +1732,124 @@ export class TaskboardDatabase {
     this.database.close();
   }
 
+  #migrateDemandContext() {
+    const tableSql = this.database.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'demands'
+    `).get()?.sql ?? "";
+    if (tableSql.includes("'context'") && tableSql.includes("'contextualized'")) return;
+
+    this.database.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE");
+    try {
+      this.database.exec(`
+        DROP TABLE IF EXISTS demands_context_migration;
+        CREATE TABLE demands_context_migration (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          acceptance_criteria TEXT NOT NULL DEFAULT '[]',
+          classification TEXT NOT NULL DEFAULT 'unclassified' CHECK (
+            classification IN ('unclassified', 'context', 'question', 'complex', 'debug')
+          ),
+          status TEXT NOT NULL CHECK (
+            status IN ('new', 'contextualized', 'intake', 'planned', 'change_requested')
+          ),
+          created_by TEXT NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO demands_context_migration (
+          id, project_id, title, description, acceptance_criteria, classification,
+          status, created_by, version, created_at, updated_at
+        )
+        SELECT
+          id, project_id, title, description, acceptance_criteria, classification,
+          status, created_by, version, created_at, updated_at
+        FROM demands;
+        DROP TABLE demands;
+        ALTER TABLE demands_context_migration RENAME TO demands;
+        CREATE INDEX demands_project_created ON demands(project_id, created_at, id);
+      `);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.database.exec("PRAGMA foreign_keys = ON");
+    }
+
+    const violation = this.database.prepare("PRAGMA foreign_key_check").get();
+    if (violation) {
+      throw new Error(`Demand context migration produced a foreign key violation in '${violation.table}'`);
+    }
+  }
+
+  #migrateNodeRuns() {
+    const table = this.database.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'node_runs'
+    `).get();
+    const workstream = this.database.prepare("PRAGMA table_info(node_runs)").all()
+      .find((column) => column.name === "workstream_id");
+    if (table?.sql?.includes("waiting_input") && Number(workstream?.notnull) === 0) return;
+
+    this.database.exec("PRAGMA foreign_keys = OFF");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.exec(`
+        CREATE TABLE node_runs_new (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          workstream_id TEXT REFERENCES workstreams(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(id),
+          session_id TEXT,
+          parent_run_id TEXT REFERENCES node_runs_new(id),
+          status TEXT NOT NULL CHECK (status IN (
+            'queued', 'running', 'waiting_input', 'waiting_review', 'changes_requested',
+            'approved', 'failed', 'canceled', 'completed'
+          )),
+          instruction TEXT NOT NULL,
+          result TEXT,
+          error TEXT,
+          version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO node_runs_new (
+          id, project_id, workstream_id, task_id, agent_profile_id, session_id,
+          parent_run_id, status, instruction, result, error, version,
+          created_at, started_at, completed_at, updated_at
+        )
+        SELECT
+          id, project_id, workstream_id, task_id, agent_profile_id, session_id,
+          parent_run_id,
+          CASE status
+            WHEN 'waiting' THEN 'waiting_input'
+            WHEN 'review' THEN 'waiting_review'
+            WHEN 'blocked' THEN 'waiting_input'
+            ELSE status
+          END,
+          instruction, result, error, version, created_at, started_at, completed_at, updated_at
+        FROM node_runs;
+        DROP TABLE node_runs;
+        ALTER TABLE node_runs_new RENAME TO node_runs;
+        CREATE INDEX node_runs_project_status_created
+          ON node_runs(project_id, status, created_at, id);
+        CREATE INDEX node_runs_agent_created
+          ON node_runs(agent_profile_id, created_at, id);
+      `);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.database.exec("PRAGMA foreign_keys = ON");
+    }
+  }
+
   #migrateTaskStatuses() {
     const tasksSql = this.database.prepare(`
       SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'
@@ -774,6 +1878,10 @@ export class TaskboardDatabase {
           labels TEXT NOT NULL DEFAULT '[]',
           sort_order REAL NOT NULL,
           thread_id TEXT,
+          thread_codex_project_id TEXT,
+          thread_codex_project_kind TEXT,
+          thread_codex_host_id TEXT,
+          thread_workspace_path TEXT,
           git_branch TEXT,
           worktree_path TEXT,
           worktree_branch TEXT,
@@ -789,13 +1897,15 @@ export class TaskboardDatabase {
 
         INSERT INTO tasks_status_migration (
           id, identifier, project_id, title, description, status, priority, labels,
-          sort_order, thread_id, git_branch, worktree_path, worktree_branch,
+          sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
+          thread_codex_host_id, thread_workspace_path, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           archived_at, version, created_at, updated_at
         )
         SELECT
           id, identifier, project_id, title, description, status, priority, labels,
-          sort_order, thread_id, git_branch, worktree_path, worktree_branch,
+          sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
+          thread_codex_host_id, thread_workspace_path, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           archived_at, version, created_at, updated_at
         FROM tasks;
@@ -937,7 +2047,9 @@ export class TaskboardDatabase {
       const insertTask = this.database.prepare(`
         INSERT INTO tasks (
           id, identifier, project_id, title, description, status, priority, labels,
-          sort_order, thread_id, creator_type, creator_id, creator_name, creator_avatar_url,
+          sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
+          thread_codex_host_id, thread_workspace_path,
+          creator_type, creator_id, creator_name, creator_avatar_url,
           assignee_type, assignee_id, assignee_name, assignee_avatar_url,
           workflow_id, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
@@ -945,7 +2057,8 @@ export class TaskboardDatabase {
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, NULL, ?, ?, ?, ?,
+          ?, NULL, NULL, NULL, NULL, NULL,
+          ?, ?, ?, ?,
           ?, ?, ?, ?,
           NULL, NULL, NULL, NULL,
           NULL, ?, NULL, NULL,
@@ -1274,6 +2387,1539 @@ export class TaskboardDatabase {
     return this.getWorkflowWorkspace(projectId);
   }
 
+  listGraphNodes(projectId) {
+    if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    return this.database.prepare(`
+      SELECT * FROM graph_nodes
+      WHERE project_id = ?
+      ORDER BY layer, z_index, created_at, id
+    `).all(projectId).map(graphNodeFromRow);
+  }
+
+  listProjectCanvases(projectId) {
+    if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId)) {
+      throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+    }
+    let rows = this.database.prepare(`
+      SELECT * FROM project_canvases
+      WHERE project_id = ?
+      ORDER BY created_at, id
+    `).all(projectId);
+    if (rows.length === 0) {
+      const timestamp = now();
+      this.database.prepare(`
+        INSERT INTO project_canvases (id, project_id, name, created_at, updated_at)
+        VALUES (?, ?, '画布 1', ?, ?)
+      `).run(randomUUID(), projectId, timestamp, timestamp);
+      rows = this.database.prepare(`
+        SELECT * FROM project_canvases
+        WHERE project_id = ?
+        ORDER BY created_at, id
+      `).all(projectId);
+    }
+    return rows.map(projectCanvasFromRow);
+  }
+
+  createProjectCanvas(projectId) {
+    const canvases = this.listProjectCanvases(projectId);
+    const timestamp = now();
+    const id = randomUUID();
+    this.database.prepare(`
+      INSERT INTO project_canvases (id, project_id, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, projectId, `画布 ${canvases.length + 1}`, timestamp, timestamp);
+    return projectCanvasFromRow(this.database.prepare(
+      "SELECT * FROM project_canvases WHERE id = ?",
+    ).get(id));
+  }
+
+  listCanvasNodes(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM canvas_nodes
+      WHERE project_id = ?
+      ORDER BY created_at, canvas_id, node_id
+    `).all(projectId).map(canvasNodeFromRow);
+  }
+
+  assignCanvasNode(projectId, canvasId, nodeId) {
+    const canvas = this.database.prepare(`
+      SELECT 1 FROM project_canvases WHERE id = ? AND project_id = ?
+    `).get(canvasId, projectId);
+    if (!canvas) {
+      throw new ApiError(404, "CANVAS_NOT_FOUND", `Canvas '${canvasId}' does not exist in project '${projectId}'`);
+    }
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO canvas_nodes (project_id, canvas_id, node_id, visible, created_at, updated_at)
+      VALUES (?, ?, ?, 1, ?, ?)
+      ON CONFLICT(canvas_id, node_id) DO UPDATE SET
+        visible = 1,
+        updated_at = excluded.updated_at
+    `).run(projectId, canvasId, nodeId, timestamp, timestamp);
+    return canvasNodeFromRow(this.database.prepare(`
+      SELECT * FROM canvas_nodes WHERE canvas_id = ? AND node_id = ?
+    `).get(canvasId, nodeId));
+  }
+
+  moveCanvasNode(projectId, canvasId, nodeId) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE canvas_nodes SET visible = 0, updated_at = ?
+      WHERE project_id = ? AND node_id = ? AND canvas_id <> ? AND visible = 1
+    `).run(timestamp, projectId, nodeId, canvasId);
+    return this.assignCanvasNode(projectId, canvasId, nodeId);
+  }
+
+  clearProjectCanvas(projectId, canvasId) {
+    const canvas = this.database.prepare(`
+      SELECT * FROM project_canvases WHERE id = ? AND project_id = ?
+    `).get(canvasId, projectId);
+    if (!canvas) {
+      throw new ApiError(404, "CANVAS_NOT_FOUND", `Canvas '${canvasId}' does not exist in project '${projectId}'`);
+    }
+    const timestamp = now();
+    const result = this.database.prepare(`
+      UPDATE canvas_nodes SET visible = 0, updated_at = ?
+      WHERE project_id = ? AND canvas_id = ? AND visible = 1
+    `).run(timestamp, projectId, canvasId);
+    return { canvas: projectCanvasFromRow(canvas), clearedNodeCount: Number(result.changes) };
+  }
+
+  saveGraphNodeLayout(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (!this.database.prepare("SELECT 1 FROM projects WHERE id = ?").get(input.projectId)) {
+        throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${input.projectId}' does not exist`);
+      }
+      const current = this.database.prepare(`
+        SELECT * FROM graph_nodes
+        WHERE project_id = ? AND entity_type = ? AND entity_id = ?
+      `).get(input.projectId, input.entityType, input.entityId);
+      const actualVersion = current?.version ?? 0;
+      if (actualVersion !== input.version) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Graph node changed since it was last read", {
+          expectedVersion: input.version,
+          actualVersion,
+        });
+      }
+      if (current) {
+        this.database.prepare(`
+          UPDATE graph_nodes
+          SET x = ?, y = ?, width = ?, height = ?, version = version + 1, updated_at = ?
+          WHERE id = ? AND version = ?
+        `).run(input.x, input.y, input.width, input.height, timestamp, current.id, input.version);
+      } else {
+        this.database.prepare(`
+          INSERT INTO graph_nodes (
+            id, project_id, entity_type, entity_id, x, y, width, height,
+            collapsed, layer, z_index, version, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?)
+        `).run(
+          input.id,
+          input.projectId,
+          input.entityType,
+          input.entityId,
+          input.x,
+          input.y,
+          input.width,
+          input.height,
+          input.layer,
+          input.zIndex,
+          timestamp,
+          timestamp,
+        );
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    const row = this.database.prepare(`
+      SELECT * FROM graph_nodes
+      WHERE project_id = ? AND entity_type = ? AND entity_id = ?
+    `).get(input.projectId, input.entityType, input.entityId);
+    return graphNodeFromRow(row);
+  }
+
+  listGraphEdges(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM graph_edges
+      WHERE project_id = ?
+      ORDER BY created_at, id
+    `).all(projectId).map(graphEdgeFromRow);
+  }
+
+  listMapItems(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM map_items WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(mapItemFromRow);
+  }
+
+  getMapItem(id) {
+    const row = this.database.prepare("SELECT * FROM map_items WHERE id = ?").get(id);
+    return row ? mapItemFromRow(row) : null;
+  }
+
+  createMapItem(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO map_items (
+        id, project_id, kind, title, content, status, created_by,
+        version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'ready', ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.kind,
+      input.title,
+      input.content,
+      input.createdBy,
+      timestamp,
+      timestamp,
+    );
+    return mapItemFromRow(this.database.prepare("SELECT * FROM map_items WHERE id = ?").get(input.id));
+  }
+
+  markMapItemSent(id) {
+    this.database.prepare(`
+      UPDATE map_items SET status = 'sent', version = version + 1, updated_at = ? WHERE id = ?
+    `).run(now(), id);
+    const row = this.database.prepare("SELECT * FROM map_items WHERE id = ?").get(id);
+    return row ? mapItemFromRow(row) : null;
+  }
+
+  listSkillNodes(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM skill_nodes WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(skillNodeFromRow);
+  }
+
+  getSkillNode(id) {
+    const row = this.database.prepare("SELECT * FROM skill_nodes WHERE id = ?").get(id);
+    return row ? skillNodeFromRow(row) : null;
+  }
+
+  createSkillNode(input) {
+    const existing = this.database.prepare(`
+      SELECT * FROM skill_nodes WHERE project_id = ? AND skill_id = ?
+    `).get(input.projectId, input.skillId);
+    if (existing) return skillNodeFromRow(existing);
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO skill_nodes (
+        id, project_id, skill_id, label, description, scope, created_by,
+        version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.skillId,
+      input.label,
+      input.description,
+      input.scope,
+      input.createdBy,
+      timestamp,
+      timestamp,
+    );
+    return this.getSkillNode(input.id);
+  }
+
+  listScheduledTriggers(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM scheduled_triggers WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(scheduledTriggerFromRow);
+  }
+
+  getScheduledTrigger(id) {
+    const row = this.database.prepare("SELECT * FROM scheduled_triggers WHERE id = ?").get(id);
+    return row ? scheduledTriggerFromRow(row) : null;
+  }
+
+  createScheduledTrigger(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO scheduled_triggers (
+        id, project_id, prompt, interval_minutes, enabled, last_triggered_at,
+        next_trigger_at, created_by, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.prompt,
+      input.intervalMinutes,
+      input.enabled ? 1 : 0,
+      input.createdBy,
+      timestamp,
+      timestamp,
+    );
+    return this.getScheduledTrigger(input.id);
+  }
+
+  updateScheduledTriggerEnabled(id, enabled) {
+    const trigger = this.getScheduledTrigger(id);
+    if (!trigger) return null;
+    const hasTarget = Boolean(this.database.prepare(`
+      SELECT 1 FROM graph_edges
+      WHERE source_node_id = ? AND relation_type = 'scheduled_for' AND state = 'active'
+      LIMIT 1
+    `).get(`scheduled_trigger:${id}`));
+    const timestamp = now();
+    const nextTriggerAt = enabled && hasTarget
+      ? new Date(Date.now() + trigger.intervalMinutes * 60_000).toISOString()
+      : null;
+    this.database.prepare(`
+      UPDATE scheduled_triggers
+      SET enabled = ?, next_trigger_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(enabled ? 1 : 0, nextTriggerAt, timestamp, id);
+    return this.getScheduledTrigger(id);
+  }
+
+  armScheduledTrigger(id) {
+    const trigger = this.getScheduledTrigger(id);
+    if (!trigger || !trigger.enabled) return trigger;
+    const timestamp = now();
+    const nextTriggerAt = new Date(Date.now() + trigger.intervalMinutes * 60_000).toISOString();
+    this.database.prepare(`
+      UPDATE scheduled_triggers
+      SET next_trigger_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(nextTriggerAt, timestamp, id);
+    return this.getScheduledTrigger(id);
+  }
+
+  listDueScheduledTriggers(timestamp = now()) {
+    return this.database.prepare(`
+      SELECT * FROM scheduled_triggers
+      WHERE enabled = 1 AND next_trigger_at IS NOT NULL AND next_trigger_at <= ?
+      ORDER BY next_trigger_at, id
+    `).all(timestamp).map(scheduledTriggerFromRow);
+  }
+
+  recordScheduledTriggerFired(id) {
+    const trigger = this.getScheduledTrigger(id);
+    if (!trigger || !trigger.enabled) return trigger;
+    const timestamp = now();
+    const nextTriggerAt = new Date(Date.now() + trigger.intervalMinutes * 60_000).toISOString();
+    this.database.prepare(`
+      UPDATE scheduled_triggers
+      SET last_triggered_at = ?, next_trigger_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ? AND enabled = 1
+    `).run(timestamp, nextTriggerAt, timestamp, id);
+    return this.getScheduledTrigger(id);
+  }
+
+  createGraphEdge(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO graph_edges (
+        id, project_id, source_node_id, target_node_id, relation_type,
+        state, metadata, created_by, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.sourceNodeId,
+      input.targetNodeId,
+      input.relationType,
+      JSON.stringify(input.metadata ?? {}),
+      input.createdBy,
+      timestamp,
+      timestamp,
+    );
+    return graphEdgeFromRow(this.database.prepare("SELECT * FROM graph_edges WHERE id = ?").get(input.id));
+  }
+
+  updateGraphEdge(id, changes) {
+    const current = this.database.prepare("SELECT * FROM graph_edges WHERE id = ?").get(id);
+    if (!current) return null;
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE graph_edges
+      SET state = ?, metadata = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(
+      changes.state ?? current.state,
+      JSON.stringify(changes.metadata ?? JSON.parse(current.metadata)),
+      timestamp,
+      id,
+    );
+    return graphEdgeFromRow(this.database.prepare("SELECT * FROM graph_edges WHERE id = ?").get(id));
+  }
+
+  createGraphCommand(input) {
+    const existing = this.database.prepare(`
+      SELECT * FROM graph_commands WHERE project_id = ? AND idempotency_key = ?
+    `).get(input.projectId, input.idempotencyKey);
+    if (existing) return graphCommandFromRow(existing);
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO graph_commands (
+        id, project_id, source_node_id, target_node_id, action_type,
+        requested_by, idempotency_key, status, input, result, error, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?, NULL)
+    `).run(
+      input.id,
+      input.projectId,
+      input.sourceNodeId,
+      input.targetNodeId,
+      input.actionType,
+      input.requestedBy,
+      input.idempotencyKey,
+      JSON.stringify(input.input),
+      timestamp,
+    );
+    return this.getGraphCommand(input.id);
+  }
+
+  getGraphCommand(id) {
+    const row = this.database.prepare("SELECT * FROM graph_commands WHERE id = ?").get(id);
+    return row ? graphCommandFromRow(row) : null;
+  }
+
+  listGraphCommands(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM graph_commands
+      WHERE project_id = ? AND status = 'completed'
+      ORDER BY created_at, id
+    `).all(projectId).map(graphCommandFromRow);
+  }
+
+  completeGraphCommand(id, result) {
+    this.database.prepare(`
+      UPDATE graph_commands
+      SET status = 'completed', result = ?, error = NULL, completed_at = ?
+      WHERE id = ?
+    `).run(JSON.stringify(result), now(), id);
+    return this.getGraphCommand(id);
+  }
+
+  failGraphCommand(id, error) {
+    this.database.prepare(`
+      UPDATE graph_commands
+      SET status = 'failed', error = ?, completed_at = ?
+      WHERE id = ?
+    `).run(error, now(), id);
+    return this.getGraphCommand(id);
+  }
+
+  listAgentProfiles(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM agent_profiles WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(agentProfileFromRow);
+  }
+
+  getAgentProfile(id) {
+    const row = this.database.prepare("SELECT * FROM agent_profiles WHERE id = ?").get(id);
+    return row ? agentProfileFromRow(row) : null;
+  }
+
+  createAgentProfile(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO agent_profiles (
+        id, project_id, name, role, skill_id, provider, model, status, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.name,
+      input.role,
+      input.skillId,
+      input.provider ?? null,
+      input.model ?? null,
+      timestamp,
+      timestamp,
+    );
+    return this.getAgentProfile(input.id);
+  }
+
+  renameAgentProfile(id, name) {
+    this.database.prepare(`
+      UPDATE agent_profiles
+      SET name = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(name, now(), id);
+    return this.getAgentProfile(id);
+  }
+
+  setAgentProfileSkill(id, skillId) {
+    this.database.prepare(`
+      UPDATE agent_profiles
+      SET skill_id = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(skillId, now(), id);
+    return this.getAgentProfile(id);
+  }
+
+  listAgentTeamMemberships(projectId) {
+    return this.database.prepare(`
+      SELECT membership.*
+      FROM agent_team_members membership
+      JOIN agent_profiles team ON team.id = membership.team_agent_id
+      WHERE team.project_id = ?
+      ORDER BY membership.team_agent_id, membership.position
+    `).all(projectId).map(agentTeamMembershipFromRow);
+  }
+
+  getAgentTeamMembers(teamAgentId) {
+    return this.database.prepare(`
+      SELECT member.*
+      FROM agent_team_members membership
+      JOIN agent_profiles member ON member.id = membership.member_agent_id
+      WHERE membership.team_agent_id = ?
+      ORDER BY membership.position
+    `).all(teamAgentId).map(agentProfileFromRow);
+  }
+
+  createAgentTeam(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO agent_profiles (
+          id, project_id, name, role, skill_id, provider, model, status, version, created_at, updated_at
+        ) VALUES (?, ?, ?, 'executor', NULL, NULL, NULL, 'idle', 1, ?, ?)
+      `).run(input.teamAgentId, input.projectId, input.name, timestamp, timestamp);
+      const insertMember = this.database.prepare(`
+        INSERT INTO agent_team_members (team_agent_id, member_agent_id, position, created_at)
+        VALUES (?, ?, ?, ?)
+      `);
+      input.memberAgentIds.forEach((memberAgentId, position) => {
+        insertMember.run(input.teamAgentId, memberAgentId, position, timestamp);
+      });
+      const insertDocument = this.database.prepare(`
+        INSERT INTO map_items (
+          id, project_id, kind, title, content, status, created_by, version, created_at, updated_at
+        ) VALUES (?, ?, 'background_material', ?, ?, 'ready', ?, 1, ?, ?)
+      `);
+      insertDocument.run(
+        input.planItemId,
+        input.projectId,
+        `${input.name} · Team Plan`,
+        input.plan,
+        `team:${input.teamAgentId}`,
+        timestamp,
+        timestamp,
+      );
+      insertDocument.run(
+        input.protocolItemId,
+        input.projectId,
+        `${input.name} · Working Protocol`,
+        input.protocol,
+        `team:${input.teamAgentId}`,
+        timestamp,
+        timestamp,
+      );
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      team: this.getAgentProfile(input.teamAgentId),
+      members: this.getAgentTeamMembers(input.teamAgentId),
+      plan: this.getMapItem(input.planItemId),
+      protocol: this.getMapItem(input.protocolItemId),
+    };
+  }
+
+  setAgentProfileStatus(id, status) {
+    const timestamp = now();
+    this.database.prepare(`
+      UPDATE agent_profiles
+      SET status = ?, version = version + 1, updated_at = ?
+      WHERE id = ? AND status <> ?
+    `).run(status, timestamp, id, status);
+    return this.getAgentProfile(id);
+  }
+
+  listAgentRuntimeBindings(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM agent_runtime_bindings WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(agentRuntimeBindingFromRow);
+  }
+
+  listRecoverableAgentRuntimeBindings() {
+    return this.database.prepare(`
+      SELECT * FROM agent_runtime_bindings
+      WHERE current_node_run_id IS NOT NULL AND status IN ('working', 'waiting', 'blocked', 'paused')
+      ORDER BY updated_at, id
+    `).all().map(agentRuntimeBindingFromRow);
+  }
+
+  getAgentRuntimeBindingByProfile(agentProfileId) {
+    const row = this.database.prepare(`
+      SELECT * FROM agent_runtime_bindings WHERE agent_profile_id = ?
+    `).get(agentProfileId);
+    return row ? agentRuntimeBindingFromRow(row) : null;
+  }
+
+  getAgentRuntimeBindingBySession(sessionId) {
+    const row = this.database.prepare(`
+      SELECT * FROM agent_runtime_bindings WHERE session_id = ?
+    `).get(sessionId);
+    return row ? agentRuntimeBindingFromRow(row) : null;
+  }
+
+  createAgentRuntimeBinding(input) {
+    const existing = this.getAgentRuntimeBindingByProfile(input.agentProfileId);
+    if (existing) return existing;
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO agent_runtime_bindings (
+        id, project_id, agent_profile_id, session_id, current_node_run_id,
+        status, last_error, version, created_at, updated_at
+      ) VALUES (?, ?, ?, NULL, ?, 'idle', NULL, 1, ?, ?)
+    `).run(input.id, input.projectId, input.agentProfileId, input.currentNodeRunId ?? null, timestamp, timestamp);
+    return this.getAgentRuntimeBindingByProfile(input.agentProfileId);
+  }
+
+  updateAgentRuntimeBinding(agentProfileId, changes) {
+    const current = this.getAgentRuntimeBindingByProfile(agentProfileId);
+    if (!current) return null;
+    const sessionId = Object.hasOwn(changes, "sessionId") ? changes.sessionId : current.sessionId;
+    const currentNodeRunId = Object.hasOwn(changes, "currentNodeRunId")
+      ? changes.currentNodeRunId
+      : current.currentNodeRunId;
+    const status = changes.status ?? current.status;
+    const lastError = Object.hasOwn(changes, "lastError") ? changes.lastError : current.lastError;
+    this.database.prepare(`
+      UPDATE agent_runtime_bindings
+      SET session_id = ?, current_node_run_id = ?, status = ?, last_error = ?,
+          version = version + 1, updated_at = ?
+      WHERE agent_profile_id = ?
+    `).run(sessionId, currentNodeRunId, status, lastError, now(), agentProfileId);
+    this.setAgentProfileStatus(agentProfileId, status);
+    return this.getAgentRuntimeBindingByProfile(agentProfileId);
+  }
+
+  listNodeRuns(projectId, statuses = []) {
+    const where = ["project_id = ?"];
+    const values = [projectId];
+    if (statuses.length > 0) {
+      where.push(`status IN (${statuses.map(() => "?").join(", ")})`);
+      values.push(...statuses);
+    }
+    return this.database.prepare(`
+      SELECT * FROM node_runs
+      WHERE ${where.join(" AND ")}
+      ORDER BY created_at, id
+    `).all(...values).map(nodeRunFromRow);
+  }
+
+  listRecoverableNodeRuns() {
+    return this.database.prepare(`
+      SELECT * FROM node_runs
+      WHERE status IN ('queued', 'running')
+      ORDER BY created_at, id
+    `).all().map(nodeRunFromRow);
+  }
+
+  getNodeRun(id) {
+    const row = this.database.prepare("SELECT * FROM node_runs WHERE id = ?").get(id);
+    return row ? nodeRunFromRow(row) : null;
+  }
+
+  getLatestNodeRunByTask(taskId) {
+    const row = this.database.prepare(`
+      SELECT * FROM node_runs WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(taskId);
+    return row ? nodeRunFromRow(row) : null;
+  }
+
+  getLatestNodeRunForAgent(agentProfileId) {
+    const row = this.database.prepare(`
+      SELECT * FROM node_runs WHERE agent_profile_id = ? ORDER BY created_at DESC, id DESC LIMIT 1
+    `).get(agentProfileId);
+    return row ? nodeRunFromRow(row) : null;
+  }
+
+  createNodeRun(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO node_runs (
+        id, project_id, workstream_id, task_id, agent_profile_id, session_id,
+        parent_run_id, status, instruction, result, error, version,
+        created_at, started_at, completed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, NULL, ?, 'queued', ?, NULL, NULL, 1, ?, NULL, NULL, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.workstreamId,
+      input.taskId,
+      input.agentProfileId,
+      input.parentRunId ?? null,
+      input.instruction,
+      timestamp,
+      timestamp,
+    );
+    return this.getNodeRun(input.id);
+  }
+
+  updateNodeRun(id, changes) {
+    const current = this.getNodeRun(id);
+    if (!current) return null;
+    const status = changes.status ?? current.status;
+    const sessionId = Object.hasOwn(changes, "sessionId") ? changes.sessionId : current.sessionId;
+    const result = Object.hasOwn(changes, "result") ? changes.result : current.result;
+    const error = Object.hasOwn(changes, "error") ? changes.error : current.error;
+    const timestamp = now();
+    const startedAt = current.startedAt ?? (status === "running" ? timestamp : null);
+    const completedAt = ["completed", "failed", "canceled"].includes(status)
+      ? (current.completedAt ?? timestamp)
+      : null;
+    this.database.prepare(`
+      UPDATE node_runs
+      SET status = ?, session_id = ?, result = ?, error = ?,
+          started_at = ?, completed_at = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(
+      status,
+      sessionId,
+      result === null ? null : JSON.stringify(result),
+      error,
+      startedAt,
+      completedAt,
+      timestamp,
+      id,
+    );
+    return this.getNodeRun(id);
+  }
+
+  setWorkstreamStatus(id, status) {
+    this.database.prepare(`
+      UPDATE workstreams SET status = ?, version = version + 1, updated_at = ? WHERE id = ?
+    `).run(status, now(), id);
+    return this.getWorkstream(id);
+  }
+
+  listDemands(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM demands WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(demandFromRow);
+  }
+
+  getDemand(id) {
+    const row = this.database.prepare("SELECT * FROM demands WHERE id = ?").get(id);
+    return row ? demandFromRow(row) : null;
+  }
+
+  createDemand(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO demands (
+        id, project_id, title, description, acceptance_criteria, classification, status,
+        created_by, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'unclassified', 'new', ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.title,
+      input.description,
+      JSON.stringify(input.acceptanceCriteria),
+      input.createdBy,
+      timestamp,
+      timestamp,
+    );
+    return this.getDemand(input.id);
+  }
+
+  setDemandClassification(id, classification) {
+    if (!["context", "question", "complex", "debug"].includes(classification)) {
+      throw new ApiError(400, "INVALID_DEMAND_CLASSIFICATION", "Unknown Demand classification");
+    }
+    this.database.prepare(`
+      UPDATE demands
+      SET classification = ?, version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(classification, now(), id);
+    return this.getDemand(id);
+  }
+
+  contextualizeDemand(id) {
+    this.database.prepare(`
+      UPDATE demands
+      SET classification = 'context', status = 'contextualized', version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(now(), id);
+    return this.getDemand(id);
+  }
+
+  listBacklogPools(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM backlog_pools WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(backlogPoolFromRow);
+  }
+
+  getBacklogPool(id) {
+    const row = this.database.prepare("SELECT * FROM backlog_pools WHERE id = ?").get(id);
+    return row ? backlogPoolFromRow(row) : null;
+  }
+
+  createBacklogPool(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO backlog_pools (
+        id, project_id, title, status, created_by, version, created_at, updated_at
+      ) VALUES (?, ?, ?, 'active', ?, 1, ?, ?)
+    `).run(input.id, input.projectId, input.title, input.createdBy, timestamp, timestamp);
+    return this.getBacklogPool(input.id);
+  }
+
+  listApprovalPools(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM approval_pools WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(approvalPoolFromRow);
+  }
+
+  getApprovalPool(id) {
+    const row = this.database.prepare("SELECT * FROM approval_pools WHERE id = ?").get(id);
+    return row ? approvalPoolFromRow(row) : null;
+  }
+
+  createApprovalPool(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO approval_pools (
+        id, project_id, title, status, created_by, version, created_at, updated_at
+      ) VALUES (?, ?, ?, 'active', ?, 1, ?, ?)
+    `).run(input.id, input.projectId, input.title, input.createdBy, timestamp, timestamp);
+    return this.getApprovalPool(input.id);
+  }
+
+  listRequestArtifacts(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM request_artifacts
+      WHERE project_id = ?
+      ORDER BY created_at,
+        CASE kind WHEN 'review_feedback' THEN 0 WHEN 'answer' THEN 0 ELSE 1 END,
+        id
+    `).all(projectId).map(requestArtifactFromRow);
+  }
+
+  getRequestArtifact(id) {
+    const row = this.database.prepare("SELECT * FROM request_artifacts WHERE id = ?").get(id);
+    return row ? requestArtifactFromRow(row) : null;
+  }
+
+  createRequestArtifacts(input) {
+    const kinds = input.classification === "question"
+      ? [["answer", `Answer: ${input.demandTitle}`]]
+      : input.classification === "complex"
+        ? [
+            ["review_feedback", `Review: ${input.demandTitle}`],
+            ["plan", `Plan: ${input.demandTitle}`],
+          ]
+        : [];
+    if (kinds.length === 0) return [];
+    const timestamp = now();
+    const insert = this.database.prepare(`
+      INSERT OR IGNORE INTO request_artifacts (
+        id, project_id, demand_id, agent_profile_id, node_run_id,
+        kind, title, content, status, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 'generating', 1, ?, ?)
+    `);
+    for (const [kind, title] of kinds) {
+      insert.run(
+        randomUUID(),
+        input.projectId,
+        input.demandId,
+        input.agentProfileId,
+        input.nodeRunId,
+        kind,
+        title,
+        timestamp,
+        timestamp,
+      );
+    }
+    return this.database.prepare(`
+      SELECT * FROM request_artifacts
+      WHERE node_run_id = ?
+      ORDER BY CASE kind WHEN 'review_feedback' THEN 0 WHEN 'answer' THEN 0 ELSE 1 END, id
+    `).all(input.nodeRunId).map(requestArtifactFromRow);
+  }
+
+  completeRequestArtifacts(nodeRunId, result) {
+    let artifacts = this.database.prepare(`
+      SELECT * FROM request_artifacts
+      WHERE node_run_id = ?
+      ORDER BY CASE kind WHEN 'review_feedback' THEN 0 WHEN 'answer' THEN 0 ELSE 1 END, id
+    `).all(nodeRunId).map(requestArtifactFromRow);
+    if (artifacts.length === 0) {
+      const nodeRun = this.getNodeRun(nodeRunId);
+      if (nodeRun?.parentRunId) {
+        artifacts = this.database.prepare(`
+          SELECT * FROM request_artifacts
+          WHERE node_run_id = ?
+          ORDER BY CASE kind WHEN 'review_feedback' THEN 0 WHEN 'answer' THEN 0 ELSE 1 END, id
+        `).all(nodeRun.parentRunId).map(requestArtifactFromRow);
+      }
+    }
+    const update = this.database.prepare(`
+      UPDATE request_artifacts
+      SET content = ?, status = 'ready', version = version + 1, updated_at = ?
+      WHERE id = ?
+    `);
+    const timestamp = now();
+    for (const artifact of artifacts) {
+      const content = artifact.kind === "plan"
+        ? String(result.evidence ?? result.summary ?? "")
+        : artifact.kind === "review_feedback"
+          ? String(result.summary ?? "")
+          : [result.summary, result.evidence].filter(Boolean).join("\n\n");
+      update.run(content, timestamp, artifact.id);
+    }
+    return this.database.prepare(`
+      SELECT * FROM request_artifacts
+      WHERE node_run_id = ?
+      ORDER BY CASE kind WHEN 'review_feedback' THEN 0 WHEN 'answer' THEN 0 ELSE 1 END, id
+    `).all(nodeRunId).map(requestArtifactFromRow);
+  }
+
+  listWorkstreams(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM workstreams WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(workstreamFromRow);
+  }
+
+  getWorkstream(id) {
+    const row = this.database.prepare("SELECT * FROM workstreams WHERE id = ?").get(id);
+    return row ? workstreamFromRow(row) : null;
+  }
+
+  createWorkstreamWithReviewGate(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO workstreams (
+          id, project_id, demand_id, leader_agent_id, reviewer_agent_id,
+          title, goal, scope, exclusions, risks, dependencies,
+          acceptance_criteria, deliverables, status, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'review', 1, ?, ?)
+      `).run(
+        input.workstreamId,
+        input.projectId,
+        input.demandId,
+        input.leaderAgentId,
+        input.title,
+        input.goal,
+        JSON.stringify(input.scope),
+        JSON.stringify(input.exclusions),
+        JSON.stringify(input.risks),
+        JSON.stringify(input.dependencies),
+        JSON.stringify(input.acceptanceCriteria),
+        JSON.stringify(input.deliverables),
+        timestamp,
+        timestamp,
+      );
+      this.database.prepare(`
+        INSERT INTO review_gates (
+          id, project_id, workstream_id, reviewer_agent_id, status, version, created_at, updated_at
+        ) VALUES (?, ?, ?, NULL, 'pending', 1, ?, ?)
+      `).run(input.reviewGateId, input.projectId, input.workstreamId, timestamp, timestamp);
+      this.database.prepare(`
+        UPDATE demands SET status = 'planned', version = version + 1, updated_at = ? WHERE id = ?
+      `).run(timestamp, input.demandId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      demand: this.getDemand(input.demandId),
+      workstream: this.getWorkstream(input.workstreamId),
+      reviewGate: this.getReviewGate(input.reviewGateId),
+    };
+  }
+
+  createApprovedWorkstream(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO workstreams (
+          id, project_id, demand_id, leader_agent_id, reviewer_agent_id,
+          title, goal, scope, exclusions, risks, dependencies,
+          acceptance_criteria, deliverables, status, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', 1, ?, ?)
+      `).run(
+        input.workstreamId,
+        input.projectId,
+        input.demandId,
+        input.agentProfileId,
+        input.title,
+        input.goal,
+        JSON.stringify(input.scope),
+        JSON.stringify(input.exclusions),
+        JSON.stringify(input.risks),
+        JSON.stringify(input.dependencies),
+        JSON.stringify(input.acceptanceCriteria),
+        JSON.stringify(input.deliverables),
+        timestamp,
+        timestamp,
+      );
+      this.database.prepare(`
+        UPDATE demands SET status = 'planned', version = version + 1, updated_at = ? WHERE id = ?
+      `).run(timestamp, input.demandId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      demand: this.getDemand(input.demandId),
+      workstream: this.getWorkstream(input.workstreamId),
+    };
+  }
+
+  listReviewGates(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM review_gates WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(reviewGateFromRow);
+  }
+
+  getReviewGate(id) {
+    const row = this.database.prepare("SELECT * FROM review_gates WHERE id = ?").get(id);
+    return row ? reviewGateFromRow(row) : null;
+  }
+
+  getExecutionReviewByNodeRun(nodeRunId) {
+    const row = this.database.prepare(`
+      SELECT * FROM review_gates
+      WHERE node_run_id = ? AND purpose = 'execution'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(nodeRunId);
+    return row ? reviewGateFromRow(row) : null;
+  }
+
+  assignWorkstreamReviewer(workstreamId, reviewerAgentId) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        UPDATE workstreams
+        SET reviewer_agent_id = ?, version = version + 1, updated_at = ?
+        WHERE id = ?
+      `).run(reviewerAgentId, timestamp, workstreamId);
+      this.database.prepare(`
+        UPDATE review_gates
+        SET reviewer_agent_id = ?, version = version + 1, updated_at = ?
+        WHERE workstream_id = ? AND status = 'pending'
+      `).run(reviewerAgentId, timestamp, workstreamId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      workstream: this.getWorkstream(workstreamId),
+      reviewGate: reviewGateFromRow(this.database.prepare(`
+        SELECT * FROM review_gates WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1
+      `).get(workstreamId)),
+    };
+  }
+
+  createExecutionReviewGate(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO review_gates (
+        id, project_id, workstream_id, node_run_id, purpose,
+        reviewer_agent_id, status, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'execution', ?, 'pending', 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.workstreamId,
+      input.nodeRunId,
+      input.reviewerAgentId,
+      timestamp,
+      timestamp,
+    );
+    return this.getReviewGate(input.id);
+  }
+
+  recordExecutionReviewDecision(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO review_decisions (
+          id, review_gate_id, decision, comment, decided_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(input.id, input.reviewGateId, input.decision, input.comment, input.decidedBy, timestamp);
+      this.database.prepare(`
+        UPDATE review_gates
+        SET status = ?, version = version + 1, updated_at = ? WHERE id = ?
+      `).run(input.decision, timestamp, input.reviewGateId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getReviewGate(input.reviewGateId);
+  }
+
+  recordReviewDecision(input) {
+    const timestamp = now();
+    const workstreamStatus = input.decision === "approved" ? "approved" : "draft";
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO review_decisions (
+          id, review_gate_id, decision, comment, decided_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(input.id, input.reviewGateId, input.decision, input.comment, input.decidedBy, timestamp);
+      this.database.prepare(`
+        UPDATE review_gates
+        SET status = ?, version = version + 1, updated_at = ? WHERE id = ?
+      `).run(input.decision, timestamp, input.reviewGateId);
+      this.database.prepare(`
+        UPDATE workstreams
+        SET status = ?, version = version + 1, updated_at = ? WHERE id = ?
+      `).run(workstreamStatus, timestamp, input.workstreamId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      reviewGate: this.getReviewGate(input.reviewGateId),
+      workstream: this.getWorkstream(input.workstreamId),
+      decision: {
+        id: input.id,
+        reviewGateId: input.reviewGateId,
+        decision: input.decision,
+        comment: input.comment,
+        decidedBy: input.decidedBy,
+        createdAt: timestamp,
+      },
+    };
+  }
+
+  listChangeRequests(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM change_requests WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(changeRequestFromRow);
+  }
+
+  createChangeRequest(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO change_requests (
+          id, project_id, workstream_id, demand_id, title, description,
+          status, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'open', 1, ?, ?)
+      `).run(
+        input.id,
+        input.projectId,
+        input.workstreamId,
+        input.demandId,
+        input.title,
+        input.description,
+        timestamp,
+        timestamp,
+      );
+      this.database.prepare(`
+        UPDATE demands
+        SET status = 'change_requested', version = version + 1, updated_at = ? WHERE id = ?
+      `).run(timestamp, input.demandId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      demand: this.getDemand(input.demandId),
+      workstream: this.getWorkstream(input.workstreamId),
+      changeRequest: changeRequestFromRow(this.database.prepare(
+        "SELECT * FROM change_requests WHERE id = ?",
+      ).get(input.id)),
+    };
+  }
+
+  listDeliveries(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM deliveries WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(deliveryFromRow);
+  }
+
+  getDelivery(id) {
+    const row = this.database.prepare("SELECT * FROM deliveries WHERE id = ?").get(id);
+    return row ? deliveryFromRow(row) : null;
+  }
+
+  getDeliveryByNodeRun(nodeRunId) {
+    const row = this.database.prepare("SELECT * FROM deliveries WHERE node_run_id = ?").get(nodeRunId);
+    return row ? deliveryFromRow(row) : null;
+  }
+
+  createDelivery(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO deliveries (
+        id, project_id, workstream_id, node_run_id, task_id,
+        reviewer_agent_id, summary, evidence, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.workstreamId,
+      input.nodeRunId,
+      input.taskId,
+      input.reviewerAgentId,
+      input.summary,
+      input.evidence,
+      timestamp,
+    );
+    return this.getDelivery(input.id);
+  }
+
+  listKnowledgeAssets(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM knowledge_assets WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(knowledgeAssetFromRow);
+  }
+
+  getKnowledgeAsset(id) {
+    const row = this.database.prepare("SELECT * FROM knowledge_assets WHERE id = ?").get(id);
+    return row ? knowledgeAssetFromRow(row) : null;
+  }
+
+  getKnowledgeAssetBySourceDemand(demandId) {
+    const row = this.database.prepare("SELECT * FROM knowledge_assets WHERE source_demand_id = ?").get(demandId);
+    return row ? knowledgeAssetFromRow(row) : null;
+  }
+
+  getKnowledgeVersion(assetId, versionNumber) {
+    const row = this.database.prepare(`
+      SELECT * FROM knowledge_versions WHERE asset_id = ? AND version_number = ?
+    `).get(assetId, versionNumber);
+    return row ? knowledgeVersionFromRow(row) : null;
+  }
+
+  listKnowledgeVersions(assetId) {
+    return this.database.prepare(`
+      SELECT * FROM knowledge_versions WHERE asset_id = ? ORDER BY version_number
+    `).all(assetId).map(knowledgeVersionFromRow);
+  }
+
+  createKnowledgeAssetV1(input) {
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO knowledge_assets (
+          id, project_id, title, kind, source_demand_id,
+          current_version, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)
+      `).run(
+        input.assetId,
+        input.projectId,
+        input.title,
+        input.kind ?? "project_knowledge",
+        input.sourceDemandId ?? null,
+        timestamp,
+        timestamp,
+      );
+      this.database.prepare(`
+        INSERT INTO knowledge_versions (
+          id, asset_id, version_number, content, source_delivery_id, created_by, created_at
+        ) VALUES (?, ?, 1, ?, NULL, ?, ?)
+      `).run(input.versionId, input.assetId, input.content, input.createdBy, timestamp);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return {
+      asset: this.getKnowledgeAsset(input.assetId),
+      knowledgeVersion: this.getKnowledgeVersion(input.assetId, 1),
+    };
+  }
+
+  listKnowledgeBindings(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM knowledge_bindings WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(knowledgeBindingFromRow);
+  }
+
+  getKnowledgeBinding(assetId, agentProfileId) {
+    const row = this.database.prepare(`
+      SELECT * FROM knowledge_bindings WHERE asset_id = ? AND agent_profile_id = ?
+    `).get(assetId, agentProfileId);
+    return row ? knowledgeBindingFromRow(row) : null;
+  }
+
+  getKnowledgeBindingBySyncTask(taskId) {
+    const row = this.database.prepare(`
+      SELECT * FROM knowledge_bindings WHERE sync_task_id = ?
+    `).get(taskId);
+    return row ? knowledgeBindingFromRow(row) : null;
+  }
+
+  saveKnowledgeBinding(input) {
+    const timestamp = now();
+    const existing = this.getKnowledgeBinding(input.assetId, input.agentProfileId);
+    if (existing) {
+      this.database.prepare(`
+        UPDATE knowledge_bindings
+        SET status = 'syncing', sync_task_id = ?, version = version + 1, updated_at = ?
+        WHERE id = ?
+      `).run(input.syncTaskId, timestamp, existing.id);
+      return this.getKnowledgeBinding(input.assetId, input.agentProfileId);
+    }
+    this.database.prepare(`
+      INSERT INTO knowledge_bindings (
+        id, project_id, asset_id, agent_profile_id, bound_version,
+        status, sync_task_id, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'syncing', ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.assetId,
+      input.agentProfileId,
+      input.boundVersion,
+      input.syncTaskId,
+      timestamp,
+      timestamp,
+    );
+    return this.getKnowledgeBinding(input.assetId, input.agentProfileId);
+  }
+
+  saveKnowledgeBindingDirect(input) {
+    const timestamp = now();
+    const existing = this.getKnowledgeBinding(input.assetId, input.agentProfileId);
+    if (existing) {
+      this.database.prepare(`
+        UPDATE knowledge_bindings
+        SET bound_version = ?, status = 'current', sync_task_id = NULL,
+            version = version + 1, updated_at = ?
+        WHERE id = ?
+      `).run(input.boundVersion, timestamp, existing.id);
+      return this.getKnowledgeBinding(input.assetId, input.agentProfileId);
+    }
+    this.database.prepare(`
+      INSERT INTO knowledge_bindings (
+        id, project_id, asset_id, agent_profile_id, bound_version,
+        status, sync_task_id, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'current', NULL, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.assetId,
+      input.agentProfileId,
+      input.boundVersion,
+      timestamp,
+      timestamp,
+    );
+    return this.getKnowledgeBinding(input.assetId, input.agentProfileId);
+  }
+
+  completeKnowledgeBindingSync(id, boundVersion) {
+    this.database.prepare(`
+      UPDATE knowledge_bindings
+      SET bound_version = ?, status = 'current', version = version + 1, updated_at = ?
+      WHERE id = ?
+    `).run(boundVersion, now(), id);
+    const row = this.database.prepare("SELECT * FROM knowledge_bindings WHERE id = ?").get(id);
+    return row ? knowledgeBindingFromRow(row) : null;
+  }
+
+  listKnowledgeProposals(projectId) {
+    return this.database.prepare(`
+      SELECT * FROM knowledge_update_proposals WHERE project_id = ? ORDER BY created_at, id
+    `).all(projectId).map(knowledgeProposalFromRow);
+  }
+
+  getKnowledgeProposal(id) {
+    const row = this.database.prepare("SELECT * FROM knowledge_update_proposals WHERE id = ?").get(id);
+    return row ? knowledgeProposalFromRow(row) : null;
+  }
+
+  createKnowledgeProposal(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO knowledge_update_proposals (
+        id, project_id, asset_id, delivery_id, title, content,
+        status, proposed_by, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.assetId,
+      input.deliveryId ?? null,
+      input.title,
+      input.content,
+      input.proposedBy,
+      timestamp,
+      timestamp,
+    );
+    return this.getKnowledgeProposal(input.id);
+  }
+
+  decideKnowledgeProposal(input) {
+    const proposal = this.getKnowledgeProposal(input.proposalId);
+    if (!proposal) return null;
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        UPDATE knowledge_update_proposals
+        SET status = ?, version = version + 1, updated_at = ? WHERE id = ?
+      `).run(input.decision, timestamp, proposal.id);
+      if (input.decision === "approved") {
+        const asset = this.getKnowledgeAsset(proposal.assetId);
+        const nextVersion = asset.currentVersion + 1;
+        this.database.prepare(`
+          INSERT INTO knowledge_versions (
+            id, asset_id, version_number, content, source_delivery_id, created_by, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          input.versionId,
+          asset.id,
+          nextVersion,
+          proposal.content,
+          proposal.deliveryId,
+          input.decidedBy,
+          timestamp,
+        );
+        this.database.prepare(`
+          UPDATE knowledge_assets
+          SET current_version = ?, version = version + 1, updated_at = ? WHERE id = ?
+        `).run(nextVersion, timestamp, asset.id);
+        this.database.prepare(`
+          UPDATE knowledge_bindings
+          SET status = 'stale', version = version + 1, updated_at = ?
+          WHERE asset_id = ? AND bound_version < ?
+        `).run(timestamp, asset.id, nextVersion);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    const asset = this.getKnowledgeAsset(proposal.assetId);
+    return {
+      proposal: this.getKnowledgeProposal(proposal.id),
+      asset,
+      knowledgeVersion: input.decision === "approved"
+        ? this.getKnowledgeVersion(asset.id, asset.currentVersion)
+        : null,
+      bindings: this.listKnowledgeBindings(proposal.projectId),
+    };
+  }
+
+  createDomainEvent(input) {
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO domain_events (
+        id, project_id, event_type, entity_type, entity_id, actor, payload, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.id,
+      input.projectId,
+      input.eventType,
+      input.entityType,
+      input.entityId,
+      input.actor,
+      JSON.stringify(input.payload),
+      timestamp,
+    );
+    return domainEventFromRow(this.database.prepare("SELECT * FROM domain_events WHERE id = ?").get(input.id));
+  }
+
+  createNotification(input) {
+    const existing = this.database.prepare(`
+      SELECT * FROM notifications WHERE project_id = ? AND dedupe_key = ?
+    `).get(input.projectId, input.dedupeKey);
+    if (existing) return this.getNotification(existing.id);
+    const timestamp = now();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO notifications (
+          id, project_id, event_id, event_type, actor, title, body, reason,
+          graph_node_id, due_at, impact, actions, context, dedupe_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.id,
+        input.projectId,
+        input.eventId,
+        input.eventType,
+        JSON.stringify(input.actor),
+        input.title,
+        input.body,
+        input.reason,
+        input.graphNodeId,
+        input.dueAt,
+        input.impact,
+        JSON.stringify(input.actions),
+        JSON.stringify(input.context),
+        input.dedupeKey,
+        timestamp,
+        timestamp,
+      );
+      const insertRecipient = this.database.prepare(`
+        INSERT INTO notification_recipients (
+          notification_id, recipient_type, recipient_id, read_at, handled_at, version
+        ) VALUES (?, ?, ?, NULL, NULL, 1)
+      `);
+      for (const recipient of input.recipients) {
+        insertRecipient.run(input.id, recipient.type, recipient.id);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+    return this.getNotification(input.id);
+  }
+
+  listNotifications(projectId) {
+    const rows = this.database.prepare(`
+      SELECT * FROM notifications
+      WHERE (? IS NULL OR project_id = ?)
+      ORDER BY created_at DESC, id DESC
+    `).all(projectId ?? null, projectId ?? null);
+    return rows.map((row) => this.#notificationWithRecipients(row));
+  }
+
+  getNotification(id) {
+    const row = this.database.prepare("SELECT * FROM notifications WHERE id = ?").get(id);
+    return row ? this.#notificationWithRecipients(row) : null;
+  }
+
+  updateNotificationRecipient(notificationId, recipient, changes) {
+    if (!this.getNotification(notificationId)) return null;
+    const timestamp = now();
+    this.database.prepare(`
+      INSERT INTO notification_recipients (
+        notification_id, recipient_type, recipient_id, read_at, handled_at, version
+      ) VALUES (?, ?, ?, ?, ?, 1)
+      ON CONFLICT(notification_id, recipient_type, recipient_id) DO UPDATE SET
+        read_at = CASE WHEN ? THEN excluded.read_at ELSE notification_recipients.read_at END,
+        handled_at = CASE WHEN ? THEN excluded.handled_at ELSE notification_recipients.handled_at END,
+        version = notification_recipients.version + 1
+    `).run(
+      notificationId,
+      recipient.type,
+      recipient.id,
+      changes.read ? timestamp : null,
+      changes.handled ? timestamp : null,
+      changes.read ? 1 : 0,
+      changes.handled ? 1 : 0,
+    );
+    this.database.prepare("UPDATE notifications SET updated_at = ? WHERE id = ?").run(timestamp, notificationId);
+    return this.getNotification(notificationId);
+  }
+
   listAiChatThreads() {
     const rows = this.database.prepare(`
       SELECT * FROM ai_chat_threads
@@ -1525,7 +4171,7 @@ export class TaskboardDatabase {
         UPDATE ai_chat_runs
         SET
           status = 'interrupted',
-          error = COALESCE(error, 'Taskboard service restarted'),
+          error = COALESCE(error, 'Knotline service restarted'),
           finished_at = COALESCE(finished_at, ?)
         WHERE status = 'running'
       `).run(timestamp);
@@ -1660,12 +4306,14 @@ export class TaskboardDatabase {
       this.database.prepare(`
         INSERT INTO tasks (
           id, identifier, project_id, title, description, status, priority, labels,
-          sort_order, thread_id, creator_type, creator_id, creator_name, creator_avatar_url,
+          sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
+          thread_codex_host_id, thread_workspace_path,
+          creator_type, creator_id, creator_name, creator_avatar_url,
           assignee_type, assignee_id, assignee_name, assignee_avatar_url,
           workflow_id, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           archived_at, version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)
       `).run(
         id,
         identifier,
@@ -1676,7 +4324,7 @@ export class TaskboardDatabase {
         input.priority,
         JSON.stringify(input.labels),
         sortOrder,
-        input.threadId ?? null,
+        ...(storedThreadBinding(input.threadBinding, input.threadId) ?? [null, null, null, null, null]),
         input.actor.type,
         input.actor.id,
         input.actor.name,
@@ -1704,7 +4352,7 @@ export class TaskboardDatabase {
     }
   }
 
-  updateTask(id, version, changes, threadId, actor) {
+  updateTask(id, version, changes, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     const activityChanges = taskFieldChanges(current, changes);
@@ -1794,9 +4442,16 @@ export class TaskboardDatabase {
       assignments.push("sort_order = ?");
       values.push(row.minimum === null ? 1000 : row.minimum - 1000);
     }
-    if (threadId !== undefined && !Object.hasOwn(changes, "projectId")) {
-      assignments.push("thread_id = ?");
-      values.push(threadId);
+    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    if (storedBinding && !Object.hasOwn(changes, "projectId")) {
+      assignments.push(
+        "thread_id = ?",
+        "thread_codex_project_id = ?",
+        "thread_codex_project_kind = ?",
+        "thread_codex_host_id = ?",
+        "thread_workspace_path = ?",
+      );
+      values.push(...storedBinding);
     }
     assignments.push("version = version + 1", "updated_at = ?");
     const timestamp = now();
@@ -1836,7 +4491,7 @@ export class TaskboardDatabase {
     return this.getTask(current.id);
   }
 
-  moveTask(id, version, status, sortOrder, threadId, actor) {
+  moveTask(id, version, status, sortOrder, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     if (current.archivedAt !== null) {
@@ -1859,13 +4514,18 @@ export class TaskboardDatabase {
     }
 
     const timestamp = now();
+    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const threadAssignment = storedBinding
+      ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+        thread_codex_host_id = ?, thread_workspace_path = ?,`
+      : "";
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const result = this.database.prepare(`
         UPDATE tasks
-        SET status = ?, sort_order = ?, thread_id = COALESCE(?, thread_id), version = version + 1, updated_at = ?
+        SET status = ?, sort_order = ?, ${threadAssignment} version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
-      `).run(status, sortOrder, threadId ?? null, timestamp, current.id, version);
+      `).run(status, sortOrder, ...(storedBinding ?? []), timestamp, current.id, version);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
       }
@@ -1883,17 +4543,22 @@ export class TaskboardDatabase {
     return this.getTask(current.id);
   }
 
-  archiveTask(id, version, threadId, actor) {
+  archiveTask(id, version, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     const timestamp = now();
+    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const threadAssignment = storedBinding
+      ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+        thread_codex_host_id = ?, thread_workspace_path = ?,`
+      : "";
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const result = this.database.prepare(`
         UPDATE tasks
-        SET archived_at = ?, thread_id = COALESCE(?, thread_id), version = version + 1, updated_at = ?
+        SET archived_at = ?, ${threadAssignment} version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
-      `).run(timestamp, threadId ?? null, timestamp, current.id, version);
+      `).run(timestamp, ...(storedBinding ?? []), timestamp, current.id, version);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
       }
@@ -1911,20 +4576,25 @@ export class TaskboardDatabase {
     return this.getTask(current.id);
   }
 
-  restoreTask(id, version, threadId, actor) {
+  restoreTask(id, version, threadId, threadBinding, actor) {
     const current = this.#requireTask(id);
     this.#requireVersion(current, version);
     if (current.archivedAt === null) {
       throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be restored");
     }
     const timestamp = now();
+    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const threadAssignment = storedBinding
+      ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+        thread_codex_host_id = ?, thread_workspace_path = ?,`
+      : "";
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const result = this.database.prepare(`
         UPDATE tasks
-        SET archived_at = NULL, thread_id = COALESCE(?, thread_id), version = version + 1, updated_at = ?
+        SET archived_at = NULL, ${threadAssignment} version = version + 1, updated_at = ?
         WHERE id = ? AND version = ?
-      `).run(threadId ?? null, timestamp, current.id, version);
+      `).run(...(storedBinding ?? []), timestamp, current.id, version);
       if (result.changes !== 1) {
         this.#throwMissingOrConflict(id, version);
       }
@@ -1965,7 +4635,7 @@ export class TaskboardDatabase {
     }
   }
 
-  addTaskRelation(id, version, type, relatedId, threadId, actor) {
+  addTaskRelation(id, version, type, relatedId, threadId, threadBinding, actor) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const task = this.#requireTask(id);
@@ -2014,7 +4684,7 @@ export class TaskboardDatabase {
           relation_type, source_task_id, target_task_id, created_at
         ) VALUES (?, ?, ?, ?)
       `).run(relationType, sourceTaskId, targetTaskId, timestamp);
-      this.#touchTask(task.id, version, threadId, timestamp);
+      this.#touchTask(task.id, version, threadId, threadBinding, timestamp);
       this.#recordTaskActivity(task.id, actor, [{
         field: "relation",
         before: previousRelation,
@@ -2031,7 +4701,7 @@ export class TaskboardDatabase {
     }
   }
 
-  removeTaskRelation(id, version, type, relatedId, threadId, actor) {
+  removeTaskRelation(id, version, type, relatedId, threadId, threadBinding, actor) {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const task = this.#requireTask(id);
@@ -2051,7 +4721,7 @@ export class TaskboardDatabase {
         throw new ApiError(404, "RELATION_NOT_FOUND", "This issue relation does not exist");
       }
       const timestamp = now();
-      this.#touchTask(task.id, version, threadId, timestamp);
+      this.#touchTask(task.id, version, threadId, threadBinding, timestamp);
       this.#recordTaskActivity(task.id, actor, [{
         field: "relation",
         before: relationActivityValue(type, relatedTask),
@@ -2092,14 +4762,16 @@ export class TaskboardDatabase {
     const timestamp = now();
     this.database.prepare(`
       INSERT INTO comments (
-        id, task_id, body, thread_id, author_type, author_id, author_name, author_avatar_url,
+        id, task_id, body, thread_id, thread_codex_project_id, thread_codex_project_kind,
+        thread_codex_host_id, thread_workspace_path,
+        author_type, author_id, author_name, author_avatar_url,
         version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `).run(
       id,
       task.id,
       input.body,
-      input.threadId ?? null,
+      ...(storedThreadBinding(input.threadBinding, input.threadId) ?? [null, null, null, null, null]),
       input.actor.type,
       input.actor.id,
       input.actor.name,
@@ -2115,14 +4787,19 @@ export class TaskboardDatabase {
     return row ? this.#commentWithAttachments(row) : null;
   }
 
-  updateComment(id, version, body, threadId) {
+  updateComment(id, version, body, threadId, threadBinding) {
     const current = this.#requireComment(id);
     this.#requireCommentVersion(current, version);
+    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const threadAssignment = storedBinding
+      ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+        thread_codex_host_id = ?, thread_workspace_path = ?,`
+      : "";
     const result = this.database.prepare(`
       UPDATE comments
-      SET body = ?, thread_id = COALESCE(?, thread_id), version = version + 1, updated_at = ?
+      SET body = ?, ${threadAssignment} version = version + 1, updated_at = ?
       WHERE id = ? AND version = ?
-    `).run(body, threadId ?? null, now(), id, version);
+    `).run(body, ...(storedBinding ?? []), now(), id, version);
     if (result.changes !== 1) {
       this.#throwMissingCommentOrConflict(id, version);
     }
@@ -2228,7 +4905,9 @@ export class TaskboardDatabase {
         SELECT
           id, task_id,
           CASE WHEN thread_id IS NULL THEN NULL ELSE substr(body, 1, 512) END AS body,
-          thread_id, author_type, author_id, author_name,
+          thread_id, thread_codex_project_id, thread_codex_project_kind,
+          thread_codex_host_id, thread_workspace_path,
+          author_type, author_id, author_name,
           author_avatar_url, version, updated_at
         FROM comments
         WHERE task_id IN (${placeholders})
@@ -2283,6 +4962,22 @@ export class TaskboardDatabase {
       WHERE comment_id = ?
       ORDER BY created_at, id
     `).all(commentId).map(attachmentFromRow);
+  }
+
+  #notificationWithRecipients(row) {
+    const recipients = this.database.prepare(`
+      SELECT recipient_type, recipient_id, read_at, handled_at, version
+      FROM notification_recipients
+      WHERE notification_id = ?
+      ORDER BY recipient_type, recipient_id
+    `).all(row.id).map((recipient) => ({
+      type: recipient.recipient_type,
+      id: recipient.recipient_id,
+      readAt: recipient.read_at,
+      handledAt: recipient.handled_at,
+      version: recipient.version,
+    }));
+    return notificationFromRow(row, recipients);
   }
 
   #taskWithRelations(row) {
@@ -2414,12 +5109,17 @@ export class TaskboardDatabase {
     );
   }
 
-  #touchTask(id, version, threadId, timestamp) {
+  #touchTask(id, version, threadId, threadBinding, timestamp) {
+    const storedBinding = storedThreadBinding(threadBinding, threadId);
+    const threadAssignment = storedBinding
+      ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
+        thread_codex_host_id = ?, thread_workspace_path = ?,`
+      : "";
     const result = this.database.prepare(`
       UPDATE tasks
-      SET thread_id = COALESCE(?, thread_id), version = version + 1, updated_at = ?
+      SET ${threadAssignment} version = version + 1, updated_at = ?
       WHERE id = ? AND version = ?
-    `).run(threadId ?? null, timestamp, id, version);
+    `).run(...(storedBinding ?? []), timestamp, id, version);
     if (result.changes !== 1) {
       this.#throwMissingOrConflict(id, version);
     }

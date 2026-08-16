@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { TaskboardDatabase } from "../server/database.mjs";
+import { KnotlineDatabase } from "../server/database.mjs";
 import { AiChatService } from "../server/ai-chat.mjs";
 import { normalizeCodexEvent } from "../server/ai-chat-process.mjs";
 
@@ -34,7 +34,7 @@ test("normalized item events retain a bounded public item id", () => {
 });
 
 async function createFixture() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-ai-runner-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "knotline-ai-runner-"));
   const workspacePath = path.join(directory, "workspace");
   const otherWorkspacePath = path.join(directory, "other-workspace");
   await Promise.all([mkdir(workspacePath), mkdir(otherWorkspacePath)]);
@@ -54,7 +54,7 @@ const args = process.argv.slice(2);
 if (process.env.FAKE_ENVIRONMENT_CAPTURE_PATH) {
   appendFileSync(process.env.FAKE_ENVIRONMENT_CAPTURE_PATH, JSON.stringify({
     args,
-    launcherKeys: Object.keys(process.env).filter((name) => name.startsWith("CODEX_TASKBOARD_")),
+    launcherKeys: Object.keys(process.env).filter((name) => name.startsWith("KNOTLINE_")),
   }) + "\\n");
 }
 if (args[0] === "debug" && args[1] === "models") {
@@ -142,24 +142,24 @@ if (args[0] === "app-server") {
       other: { rootPaths: [otherWorkspace] },
     },
   }));
-  const databasePath = path.join(directory, "taskboard.sqlite");
-  const database = new TaskboardDatabase(databasePath);
+  const databasePath = path.join(directory, "knotline.sqlite");
+  const database = new KnotlineDatabase(databasePath);
   database.createProject({ id: "project", name: "Project", workspacePath: null });
   database.createProject({ id: "other", name: "Other", workspacePath: null });
   const service = new AiChatService({
     database,
     codexExecutable: executable,
     codexStatePath,
-    manageTaskboardSkillPath: "/fixture/manage-taskboard/SKILL.md",
+    manageKnotlineSkillPath: "/fixture/manage-knotline/SKILL.md",
     processEnv: {
       ...process.env,
       FAKE_CAPTURE_PATH: capturePath,
       FAKE_DESCENDANT_PATH: descendantPath,
       FAKE_ENVIRONMENT_CAPTURE_PATH: environmentCapturePath,
-      CODEX_TASKBOARD_INSTANCE_TOKEN: "must-not-reach-codex",
-      CODEX_TASKBOARD_INSTANCE_SECRET: "must-not-reach-codex",
-      CODEX_TASKBOARD_PORT: "47823",
-      CODEX_TASKBOARD_VERSION: "0.2.0",
+      KNOTLINE_INSTANCE_TOKEN: "must-not-reach-codex",
+      KNOTLINE_INSTANCE_SECRET: "must-not-reach-codex",
+      KNOTLINE_PORT: "47823",
+      KNOTLINE_VERSION: "0.2.0",
     },
     killGraceMs: 50,
   });
@@ -236,7 +236,7 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
       "-",
     ]);
     assert.equal(captures[0].args.join(" ").includes("HIDDEN_SENTINEL"), false);
-    assert.match(captures[0].prompt, /\[\$manage-taskboard\]\(\/fixture\/manage-taskboard\/SKILL\.md\) e-taskboard/);
+    assert.match(captures[0].prompt, /\[\$manage-knotline\]\(\/fixture\/manage-knotline\/SKILL\.md\) e-knotline/);
     assert.match(
       captures[0].prompt,
       /HIDDEN_SENTINEL \[\$real-skill\]\(\/fixture\/real-skill\/SKILL\.md\) first/,
@@ -261,11 +261,11 @@ test("Codex turns use stdin, explicit resume ids, server-owned cwd and sanitized
     assert.equal(snapshot.events.some((event) => event.type === "command_execution"), true);
     const serialized = JSON.stringify(snapshot);
     assert.equal(serialized.includes("HIDDEN_SENTINEL"), true);
-    assert.equal(serialized.includes("<taskboard_context>"), false);
+    assert.equal(serialized.includes("<knotline_context>"), false);
     const persisted = JSON.stringify(
       fixture.database.database.prepare("SELECT * FROM ai_chat_events").all(),
     );
-    assert.equal(persisted.includes("<taskboard_context>"), false);
+    assert.equal(persisted.includes("<knotline_context>"), false);
     assert.equal(persisted.includes("SECRET REASONING"), false);
   } finally {
     await fixture.close();
@@ -418,12 +418,12 @@ test("startup marks abandoned runs interrupted while preserving the Codex thread
   `).run(thread.id, new Date().toISOString());
   await fixture.service.close();
   fixture.database.close();
-  fixture.database = new TaskboardDatabase(fixture.databasePath);
+  fixture.database = new KnotlineDatabase(fixture.databasePath);
   const restarted = new AiChatService({
     database: fixture.database,
     codexExecutable: path.join(fixture.directory, "fake-codex.mjs"),
     codexStatePath: path.join(fixture.directory, "codex-state.json"),
-    manageTaskboardSkillPath: "/fixture/manage-taskboard/SKILL.md",
+    manageKnotlineSkillPath: "/fixture/manage-knotline/SKILL.md",
   });
   fixture.service = restarted;
   try {

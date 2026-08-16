@@ -1,26 +1,23 @@
 import type {
   ActorIdentity,
-  AiChatCatalog,
-  AiChatAttachmentInput,
-  AiChatRun,
-  AiChatSandbox,
-  AiChatThread,
-  AiChatThreadSnapshot,
-  Attachment,
-  Comment,
-  DevelopmentScan,
-  HostContext,
-  IssueRelationType,
-  JiraConnection,
+  AgentProfile,
+  ApprovalPool,
+  BacklogPool,
+  Demand,
+  GraphActionResolution,
+  GraphCommand,
+  GlobalModelDirectory,
+  InstalledSkill,
+  MapItem,
+  MapItemKind,
   Project,
-  ProjectSummary,
-  Task,
-  TaskChangeActivity,
-  TaskboardMetadata,
-  TaskDraft,
-  TaskStatus,
-  WorkflowCapabilities,
-  WorkflowWorkspaceRecord,
+  ProjectCanvas,
+  ProjectMapNode,
+  ProjectMapSnapshot,
+  ProjectNotification,
+  ScheduledTrigger,
+  ModelSelection,
+  SkillNode,
 } from "./types";
 
 const DEFAULT_USER_ACTOR: ActorIdentity = {
@@ -32,14 +29,6 @@ const DEFAULT_USER_ACTOR: ActorIdentity = {
 
 let currentUserActor = DEFAULT_USER_ACTOR;
 let apiText = (_chinese: string, english: string) => english;
-
-export function setCurrentUserActor(actor?: ActorIdentity) {
-  currentUserActor = actor?.type === "user" ? actor : DEFAULT_USER_ACTOR;
-}
-
-export function setApiText(text: typeof apiText) {
-  apiText = text;
-}
 
 interface ApiErrorBody {
   error?: {
@@ -63,327 +52,54 @@ export class ApiError extends Error {
   }
 }
 
-export function resolveTaskboardUrl(path: string): string {
-  return new URL(path.replace(/^\//, ""), document.baseURI).href;
+export function setCurrentUserActor(actor?: ActorIdentity) {
+  currentUserActor = actor?.type === "user" ? actor : DEFAULT_USER_ACTOR;
+}
+
+export function setApiText(text: typeof apiText) {
+  apiText = text;
+}
+
+export function resolveKnotlineUrl(path: string): string {
+  return new URL(`/knotline/map/${path.replace(/^\/?api\/?/, "api/")}`, window.location.origin).href;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (init?.body) headers.set("Content-Type", "application/json");
   const method = (init?.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
-    headers.set("X-Taskboard-User-Id", currentUserActor.id);
-    headers.set("X-Taskboard-User-Name", encodeURIComponent(currentUserActor.name));
-    if (currentUserActor.avatarUrl) {
-      headers.set("X-Taskboard-User-Avatar", currentUserActor.avatarUrl);
-    }
+    headers.set("X-Knotline-User-Id", currentUserActor.id);
+    headers.set("X-Knotline-User-Name", encodeURIComponent(currentUserActor.name));
+    if (currentUserActor.avatarUrl) headers.set("X-Knotline-User-Avatar", currentUserActor.avatarUrl);
   }
 
-  const readRequest = method === "GET" || method === "HEAD";
   let response: Response;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      response = await fetch(resolveTaskboardUrl(path), { ...init, headers });
-      break;
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") throw error;
-      if (readRequest && attempt < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-        continue;
-      }
-      const failure = error instanceof Error && error.name === "TimeoutError"
-        ? "timeout"
-        : error instanceof TypeError
-          ? "browser-network"
-          : "network";
-      throw new ApiError(0, {
-        error: {
-          code: readRequest ? "READ_FAILED" : "SERVICE_UNAVAILABLE",
-          message: readRequest
-            ? apiText(
-                "暂时无法读取 Taskboard 数据。面板会自动重试，请稍后再试。",
-                "Taskboard data is temporarily unavailable. The panel will retry automatically.",
-              )
-            : apiText(
-                "暂时无法连接 Taskboard 服务，请稍后重试。",
-                "The Taskboard service is temporarily unavailable. Try again later.",
-              ),
-          details: { method, failure },
-        },
-      });
-    }
-  }
-  let body: T & ApiErrorBody;
   try {
-    body = (await response.json()) as T & ApiErrorBody;
+    response = await fetch(resolveKnotlineUrl(path), { ...init, headers });
   } catch (error) {
-    if ((error as Error).name === "AbortError") throw error;
-    body = {} as T & ApiErrorBody;
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw new ApiError(0, {
+      error: {
+        code: "SERVICE_UNAVAILABLE",
+        message: apiText("无法连接项目地图服务。", "Could not connect to the project map service."),
+      },
+    });
   }
 
+  let body = {} as T & ApiErrorBody;
+  try {
+    body = await response.json() as T & ApiErrorBody;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+  }
   if (!response.ok) throw new ApiError(response.status, body);
   return body;
 }
 
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
-  const data = await request<{ projects: Project[] }>("/api/projects", { signal });
+  const data = await request<{ projects: Project[] }>("/api/projects", signal ? { signal } : undefined);
   return data.projects;
-}
-
-export async function getJiraConnection(signal?: AbortSignal): Promise<JiraConnection> {
-  try {
-    const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection", { signal });
-    return data.connection;
-  } catch (error) {
-    if (
-      error instanceof ApiError
-      && (error.code === "LOCAL_COMPANION_REQUIRED" || error.status === 404)
-    ) {
-      return {
-        configured: false,
-        baseUrl: null,
-        username: null,
-        displayName: null,
-        projects: [],
-        projectId: "jira-my-tasks",
-        lastSyncedAt: null,
-        insecureHttp: false,
-      };
-    }
-    throw error;
-  }
-}
-
-export async function configureJiraConnection(input: {
-  baseUrl: string;
-  username: string;
-  password: string;
-  projects: string[];
-}): Promise<JiraConnection> {
-  const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection", {
-    method: "PUT",
-    body: JSON.stringify(input),
-  });
-  return data.connection;
-}
-
-export async function syncJiraConnection(): Promise<JiraConnection> {
-  const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection/sync", {
-    method: "POST",
-  });
-  return data.connection;
-}
-
-export async function getProjectSummary(
-  projectId: string,
-  signal?: AbortSignal,
-): Promise<ProjectSummary> {
-  return request<ProjectSummary>(
-    `/api/local/projects/${encodeURIComponent(projectId)}/summary`,
-    { signal },
-  );
-}
-
-export async function getTaskboardMetadata(signal?: AbortSignal): Promise<TaskboardMetadata> {
-  return request<TaskboardMetadata>("/api/meta", { signal });
-}
-
-export async function getTaskboardRevision(
-  since: number,
-  signal?: AbortSignal,
-): Promise<{ changed: boolean; revision: number }> {
-  const query = new URLSearchParams({ since: String(since) });
-  return request<{ changed: boolean; revision: number }>(`/api/revisions?${query}`, { signal });
-}
-
-export async function getHostRuntime(signal?: AbortSignal): Promise<HostContext | null> {
-  const data = await request<{
-    runtime: (Pick<HostContext, "threadId" | "threadRunning" | "threadTodoProgress"> & {
-      updatedAt: number;
-    }) | null;
-  }>("/api/local/host-runtime", { signal });
-  return data.runtime;
-}
-
-export async function getCodexThreadProgress(
-  threadIds: string[],
-  signal?: AbortSignal,
-): Promise<Record<string, { completed: number | null; total: number | null; running: boolean } | null>> {
-  const query = new URLSearchParams();
-  for (const threadId of threadIds) query.append("threadId", threadId);
-  const data = await request<{
-    progress: Record<string, {
-      completed: number | null;
-      total: number | null;
-      running: boolean;
-    } | null>;
-  }>(`/api/local/codex-thread-progress?${query}`, { signal });
-  return data.progress;
-}
-
-export async function publishHostRuntime(context: HostContext): Promise<void> {
-  if (!context.threadId || context.threadRunning === undefined) return;
-  await request("/api/local/host-runtime", {
-    method: "PUT",
-    body: JSON.stringify({
-      threadId: context.threadId,
-      threadRunning: context.threadRunning,
-      threadTodoProgress: context.threadTodoProgress ?? null,
-    }),
-  });
-}
-
-export async function getAiChatCatalog(
-  projectId: string,
-  signal?: AbortSignal,
-): Promise<AiChatCatalog> {
-  return request<AiChatCatalog>(
-    `/api/local/ai/catalog?projectId=${encodeURIComponent(projectId)}`,
-    { signal },
-  );
-}
-
-export async function listAiChatThreads(signal?: AbortSignal): Promise<AiChatThread[]> {
-  const data = await request<{ threads: AiChatThread[] }>("/api/local/ai/threads", { signal });
-  return data.threads;
-}
-
-export async function createAiChatThread(input: {
-  projectId: string;
-  issueId?: string;
-  title?: string;
-  model?: string;
-  reasoningEffort?: string;
-  sandbox?: AiChatSandbox;
-}): Promise<AiChatThread> {
-  const data = await request<{ thread: AiChatThread }>("/api/local/ai/threads", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return data.thread;
-}
-
-export async function getAiChatThread(
-  threadId: string,
-  signal?: AbortSignal,
-): Promise<AiChatThreadSnapshot> {
-  return request<AiChatThreadSnapshot>(
-    `/api/local/ai/threads/${encodeURIComponent(threadId)}`,
-    { signal },
-  );
-}
-
-export async function updateAiChatThread(
-  threadId: string,
-  input: {
-    title?: string;
-    model?: string;
-    reasoningEffort?: string;
-    sandbox?: AiChatSandbox;
-  },
-): Promise<AiChatThread> {
-  const data = await request<{ thread: AiChatThread }>(
-    `/api/local/ai/threads/${encodeURIComponent(threadId)}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    },
-  );
-  return data.thread;
-}
-
-export async function deleteAiChatThread(threadId: string): Promise<void> {
-  await request<void>(
-    `/api/local/ai/threads/${encodeURIComponent(threadId)}`,
-    { method: "DELETE" },
-  );
-}
-
-export async function startAiChatTurn(
-  threadId: string,
-  input: {
-    message: string;
-    skillIds?: string[];
-    attachments?: AiChatAttachmentInput[];
-    dangerFullAccessConfirmed?: boolean;
-  },
-): Promise<AiChatRun> {
-  const data = await request<{ run: AiChatRun }>(
-    `/api/local/ai/threads/${encodeURIComponent(threadId)}/turns`,
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-  );
-  return data.run;
-}
-
-export async function interruptAiChatRun(runId: string): Promise<AiChatRun> {
-  const data = await request<{ run: AiChatRun }>(
-    `/api/local/ai/runs/${encodeURIComponent(runId)}/interrupt`,
-    { method: "POST" },
-  );
-  return data.run;
-}
-
-export function subscribeAiChatThread(
-  threadId: string,
-  onHint: (type: "ai.event" | "ai.run") => void,
-  onError?: () => void,
-): () => void {
-  const source = new EventSource(
-    resolveTaskboardUrl(`/api/local/ai/threads/${encodeURIComponent(threadId)}/events`),
-  );
-  source.addEventListener("ai.event", () => onHint("ai.event"));
-  source.addEventListener("ai.run", () => onHint("ai.run"));
-  if (onError) source.addEventListener("error", onError);
-  return () => source.close();
-}
-
-export async function listDeviceWorkspaces(signal?: AbortSignal): Promise<Record<string, string>> {
-  try {
-    const data = await request<{ workspaces: Record<string, string> }>("/api/device-workspaces", { signal });
-    return data.workspaces;
-  } catch (error) {
-    if (error instanceof ApiError && error.code === "LOCAL_COMPANION_REQUIRED") return {};
-    throw error;
-  }
-}
-
-export async function listWorkflowCapabilities(
-  workspacePath?: string,
-  signal?: AbortSignal,
-): Promise<WorkflowCapabilities> {
-  const query = new URLSearchParams();
-  if (workspacePath) query.set("workspacePath", workspacePath);
-  const suffix = query.size > 0 ? `?${query}` : "";
-  return request<WorkflowCapabilities>(`/api/workflow-capabilities${suffix}`, { signal });
-}
-
-export async function getWorkflowWorkspace<T>(
-  projectId: string,
-  signal?: AbortSignal,
-): Promise<WorkflowWorkspaceRecord<T>> {
-  const data = await request<{ workflow: WorkflowWorkspaceRecord<T> }>(
-    `/api/projects/${encodeURIComponent(projectId)}/workflow-workspace`,
-    { signal },
-  );
-  return data.workflow;
-}
-
-export async function saveWorkflowWorkspace<T>(
-  projectId: string,
-  workspace: T,
-  version: number,
-): Promise<WorkflowWorkspaceRecord<T>> {
-  const data = await request<{ workflow: WorkflowWorkspaceRecord<T> }>(
-    `/api/projects/${encodeURIComponent(projectId)}/workflow-workspace`,
-    {
-      method: "PUT",
-      body: JSON.stringify({ version, workspace }),
-    },
-  );
-  return data.workflow;
 }
 
 export async function createProject(input: {
@@ -398,277 +114,263 @@ export async function createProject(input: {
   return data.project;
 }
 
-export async function createProjectLabel(projectId: string, label: string): Promise<Project> {
-  const data = await request<{ project: Project }>(
-    `/api/projects/${encodeURIComponent(projectId)}/labels`,
-    {
-      method: "POST",
-      body: JSON.stringify({ label }),
-    },
-  );
-  return data.project;
-}
-
-export async function deleteProjectLabel(projectId: string, label: string): Promise<Project> {
-  const data = await request<{ project: Project }>(
-    `/api/projects/${encodeURIComponent(projectId)}/labels`,
-    {
-      method: "DELETE",
-      body: JSON.stringify({ label }),
-    },
-  );
-  return data.project;
-}
-
-export async function deleteProject(projectId: string): Promise<void> {
-  await request(`/api/projects/${encodeURIComponent(projectId)}`, {
-    method: "DELETE",
-  });
-}
-
-export async function listDevelopmentContexts(
+export async function getProjectMap(
   projectId: string,
-  codexProjectId?: string,
-  codexThreadId?: string,
+  canvasId: string,
   signal?: AbortSignal,
-  workspacePath?: string,
-): Promise<DevelopmentScan> {
-  const query = new URLSearchParams();
-  if (codexProjectId) query.set("codexProjectId", codexProjectId);
-  if (codexThreadId) query.set("codexThreadId", codexThreadId);
-  if (workspacePath) query.set("workspacePath", workspacePath);
-  const suffix = query.size > 0 ? `?${query}` : "";
-  return request<DevelopmentScan>(
-    `/api/projects/${encodeURIComponent(projectId)}/development-contexts${suffix}`,
-    { signal },
+): Promise<ProjectMapSnapshot> {
+  const data = await request<{ map: ProjectMapSnapshot }>(
+    `/api/projects/${encodeURIComponent(projectId)}/map?canvasId=${encodeURIComponent(canvasId)}`,
+    signal ? { signal } : undefined,
+  );
+  return data.map;
+}
+
+export async function listProjectCanvases(projectId: string): Promise<ProjectCanvas[]> {
+  const data = await request<{ canvases: ProjectCanvas[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/canvases`,
+  );
+  return data.canvases;
+}
+
+export async function createProjectCanvas(projectId: string): Promise<ProjectCanvas> {
+  const data = await request<{ canvas: ProjectCanvas }>(
+    `/api/projects/${encodeURIComponent(projectId)}/canvases`,
+    { method: "POST" },
+  );
+  return data.canvas;
+}
+
+export async function assignNodeToCanvas(projectId: string, canvasId: string, nodeId: string): Promise<void> {
+  await request(
+    `/api/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/nodes`,
+    { method: "POST", body: JSON.stringify({ nodeId }) },
   );
 }
 
-async function listTasksByArchive(
+export async function clearProjectCanvas(projectId: string, canvasId: string): Promise<number> {
+  const data = await request<{ clearedNodeCount: number }>(
+    `/api/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/clear`,
+    { method: "POST" },
+  );
+  return data.clearedNodeCount;
+}
+
+export async function createProjectAgent(
   projectId: string,
-  archived: "true" | "false",
-  signal?: AbortSignal,
-): Promise<Task[]> {
-  const params = new URLSearchParams({ projectId, archived });
-  const data = await request<{ tasks: Task[] }>(`/api/tasks?${params}`, { signal });
-  return data.tasks;
+  input: {
+    name: string;
+    role: "leader" | "executor" | "reviewer";
+    skillId: string | null;
+  },
+): Promise<AgentProfile> {
+  const data = await request<{ agent: AgentProfile }>(
+    `/api/projects/${encodeURIComponent(projectId)}/agents`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.agent;
 }
 
-export function listTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
-  return listTasksByArchive(projectId, "false", signal);
+export async function renameProjectAgent(agentProfileId: string, name: string): Promise<AgentProfile> {
+  const data = await request<{ agent: AgentProfile }>(
+    `/api/agents/${encodeURIComponent(agentProfileId)}`,
+    { method: "PATCH", body: JSON.stringify({ name }) },
+  );
+  return data.agent;
 }
 
-export function listArchivedTasks(projectId: string, signal?: AbortSignal): Promise<Task[]> {
-  return listTasksByArchive(projectId, "true", signal);
-}
-
-export async function createTask(projectId: string, draft: TaskDraft, threadId?: string): Promise<Task> {
-  const data = await request<{ task: Task }>("/api/tasks", {
+export async function initializeProjectKnowledge(projectId: string, leaderAgentId: string): Promise<void> {
+  await request(`/api/projects/${encodeURIComponent(projectId)}/knowledge/initialize`, {
     method: "POST",
-    body: JSON.stringify({ projectId, ...draft, ...(threadId ? { threadId } : {}) }),
-  });
-  return data.task;
-}
-
-export async function updateTask(task: Task, draft: TaskDraft, threadId?: string): Promise<Task> {
-  const data = await request<{ task: Task }>(`/api/tasks/${encodeURIComponent(task.id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ version: task.version, ...draft, ...(threadId ? { threadId } : {}) }),
-  });
-  return data.task;
-}
-
-export async function moveTask(
-  task: Task,
-  status: TaskStatus,
-  sortOrder: number,
-  threadId?: string,
-): Promise<Task> {
-  const data = await request<{ task: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/move`,
-    {
-      method: "POST",
-      body: JSON.stringify({ version: task.version, status, sortOrder, ...(threadId ? { threadId } : {}) }),
-    },
-  );
-  return data.task;
-}
-
-export async function archiveTask(task: Task, threadId?: string): Promise<Task> {
-  const data = await request<{ task: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/archive`,
-    {
-      method: "POST",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
-    },
-  );
-  return data.task;
-}
-
-export async function restoreTask(task: Task, threadId?: string): Promise<Task> {
-  const data = await request<{ task: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/restore`,
-    {
-      method: "POST",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
-    },
-  );
-  return data.task;
-}
-
-export async function deleteArchivedTask(task: Task): Promise<void> {
-  await request(`/api/tasks/${encodeURIComponent(task.id)}`, {
-    method: "DELETE",
-    body: JSON.stringify({ version: task.version }),
+    body: JSON.stringify({ leaderAgentId }),
   });
 }
 
-export async function addTaskRelation(
-  task: Task,
-  type: IssueRelationType,
-  relatedTaskId: string,
-  threadId?: string,
-): Promise<{ task: Task; relatedTask: Task }> {
-  return request<{ task: Task; relatedTask: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/relations/${type}/${encodeURIComponent(relatedTaskId)}`,
-    {
-      method: "POST",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
-    },
+export async function createDemand(
+  projectId: string,
+  input: { title: string; description: string; acceptanceCriteria: string[] },
+): Promise<Demand> {
+  const data = await request<{ demand: Demand }>(
+    `/api/projects/${encodeURIComponent(projectId)}/demands`,
+    { method: "POST", body: JSON.stringify(input) },
   );
+  return data.demand;
 }
 
-export async function removeTaskRelation(
-  task: Task,
-  type: IssueRelationType,
-  relatedTaskId: string,
-  threadId?: string,
-): Promise<{ task: Task; relatedTask: Task }> {
-  return request<{ task: Task; relatedTask: Task }>(
-    `/api/tasks/${encodeURIComponent(task.id)}/relations/${type}/${encodeURIComponent(relatedTaskId)}`,
-    {
-      method: "DELETE",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
-    },
+export async function createBacklogPool(projectId: string, title: string): Promise<BacklogPool> {
+  const data = await request<{ backlog: BacklogPool }>(
+    `/api/projects/${encodeURIComponent(projectId)}/backlogs`,
+    { method: "POST", body: JSON.stringify({ title }) },
   );
+  return data.backlog;
 }
 
-export async function listComments(taskId: string, signal?: AbortSignal): Promise<Comment[]> {
-  const data = await request<{ comments: Comment[] }>(
-    `/api/tasks/${encodeURIComponent(taskId)}/comments`,
-    { signal },
+export async function createApprovalPool(projectId: string, title: string): Promise<ApprovalPool> {
+  const data = await request<{ approvalPool: ApprovalPool }>(
+    `/api/projects/${encodeURIComponent(projectId)}/approval-pools`,
+    { method: "POST", body: JSON.stringify({ title }) },
   );
-  return data.comments;
+  return data.approvalPool;
 }
 
-export async function listTaskActivities(
-  taskId: string,
-  signal?: AbortSignal,
-): Promise<TaskChangeActivity[]> {
-  const data = await request<{ activities: TaskChangeActivity[] }>(
-    `/api/tasks/${encodeURIComponent(taskId)}/activities`,
-    { signal },
+export async function listInstalledSkills(workspacePath: string): Promise<InstalledSkill[]> {
+  const data = await request<{ skills: InstalledSkill[] }>(
+    `/api/workflow-capabilities?workspacePath=${encodeURIComponent(workspacePath)}`,
   );
-  return data.activities;
+  return data.skills;
 }
 
-export async function createComment(taskId: string, body: string, threadId?: string): Promise<Comment> {
-  const data = await request<{ comment: Comment }>(
-    `/api/tasks/${encodeURIComponent(taskId)}/comments`,
-    {
-      method: "POST",
-      body: JSON.stringify({ body, ...(threadId ? { threadId } : {}) }),
-    },
-  );
-  return data.comment;
+export async function getGlobalModelDirectory(signal?: AbortSignal): Promise<GlobalModelDirectory> {
+  return request<GlobalModelDirectory>("/api/model-selection", signal ? { signal } : undefined);
 }
 
-export async function updateComment(comment: Comment, body: string, threadId?: string): Promise<Comment> {
-  const data = await request<{ comment: Comment }>(
-    `/api/comments/${encodeURIComponent(comment.id)}`,
+export async function selectGlobalModel(selection: ModelSelection): Promise<ModelSelection> {
+  const data = await request<{ selected: ModelSelection }>("/api/model-selection", {
+    method: "PUT",
+    body: JSON.stringify(selection),
+  });
+  return data.selected;
+}
+
+export async function createProjectSkill(projectId: string, skillId: string): Promise<SkillNode> {
+  const data = await request<{ skillNode: SkillNode }>(
+    `/api/projects/${encodeURIComponent(projectId)}/skills`,
+    { method: "POST", body: JSON.stringify({ skillId }) },
+  );
+  return data.skillNode;
+}
+
+export async function duplicateContextDocument(assetId: string): Promise<{ id: string; projectId: string; title: string }> {
+  const data = await request<{ asset: { id: string; projectId: string; title: string } }>(
+    `/api/knowledge-assets/${encodeURIComponent(assetId)}/duplicate`,
+    { method: "POST" },
+  );
+  return data.asset;
+}
+
+export async function createScheduledTrigger(
+  projectId: string,
+  input: { prompt: string; intervalMinutes: number; enabled: boolean },
+): Promise<ScheduledTrigger> {
+  const data = await request<{ trigger: ScheduledTrigger }>(
+    `/api/projects/${encodeURIComponent(projectId)}/scheduled-triggers`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.trigger;
+}
+
+export async function setScheduledTriggerEnabled(id: string, enabled: boolean): Promise<ScheduledTrigger> {
+  const data = await request<{ trigger: ScheduledTrigger }>(
+    `/api/scheduled-triggers/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: JSON.stringify({ enabled }) },
+  );
+  return data.trigger;
+}
+
+export async function createMapItem(
+  projectId: string,
+  input: { kind: MapItemKind; title: string; content: string },
+): Promise<MapItem> {
+  const data = await request<{ mapItem: MapItem }>(
+    `/api/projects/${encodeURIComponent(projectId)}/map-items`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.mapItem;
+}
+
+export async function saveGraphNodeLayout(
+  node: ProjectMapNode,
+  position: { x: number; y: number; width?: number; height?: number },
+): Promise<ProjectMapNode> {
+  const data = await request<{ node: ProjectMapNode }>(
+    `/api/graph/nodes/${encodeURIComponent(node.id)}/layout`,
     {
       method: "PATCH",
-      body: JSON.stringify({ version: comment.version, body, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({ projectId: node.projectId, version: node.version, ...position }),
     },
   );
-  return data.comment;
+  return data.node;
 }
 
-export async function deleteComment(comment: Comment, threadId?: string): Promise<void> {
-  await request(`/api/comments/${encodeURIComponent(comment.id)}`, {
-    method: "DELETE",
-    body: JSON.stringify({ version: comment.version, ...(threadId ? { threadId } : {}) }),
+export async function resolveGraphAction(
+  projectId: string,
+  sourceNodeId: string,
+  targetNodeId: string,
+): Promise<GraphActionResolution> {
+  const data = await request<{ resolution: GraphActionResolution }>(
+    `/api/projects/${encodeURIComponent(projectId)}/graph/actions/resolve`,
+    {
+      method: "POST",
+      body: JSON.stringify({ sourceNodeId, targetNodeId }),
+    },
+  );
+  return data.resolution;
+}
+
+export async function createGraphCommand(
+  projectId: string,
+  input: {
+    sourceNodeId: string;
+    targetNodeId: string;
+    actionType: string;
+    idempotencyKey: string;
+    input: Record<string, unknown>;
+  },
+): Promise<GraphCommand> {
+  const data = await request<{ command: GraphCommand }>(
+    `/api/projects/${encodeURIComponent(projectId)}/graph/commands`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.command;
+}
+
+export async function sendAgentRuntimeMessage(
+  agentProfileId: string,
+  mode: "followup" | "steer" | "inject",
+  message: string,
+): Promise<void> {
+  await request(`/api/agents/${encodeURIComponent(agentProfileId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ mode, message }),
   });
 }
 
-export async function listAttachments(taskId: string, signal?: AbortSignal): Promise<Attachment[]> {
-  const data = await request<{ attachments: Attachment[] }>(
-    `/api/tasks/${encodeURIComponent(taskId)}/attachments`,
-    { signal },
-  );
-  return data.attachments;
-}
-
-export async function uploadAttachment(taskId: string, file: File): Promise<Attachment> {
-  const data = await request<{ attachment: Attachment }>(
-    `/api/tasks/${encodeURIComponent(taskId)}/attachments`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
-        "X-Taskboard-Filename": encodeURIComponent(file.name),
-      },
-      body: file,
-    },
-  );
-  return data.attachment;
-}
-
-export async function uploadCommentAttachment(commentId: string, file: File): Promise<Attachment> {
-  const data = await request<{ attachment: Attachment }>(
-    `/api/comments/${encodeURIComponent(commentId)}/attachments`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
-        "X-Taskboard-Filename": encodeURIComponent(file.name),
-      },
-      body: file,
-    },
-  );
-  return data.attachment;
-}
-
-export async function deleteAttachment(attachment: Attachment): Promise<void> {
-  await request(`/api/attachments/${encodeURIComponent(attachment.id)}`, {
-    method: "DELETE",
+export async function controlNodeRun(
+  nodeRunId: string,
+  action: "pause" | "resume",
+): Promise<void> {
+  await request(`/api/node-runs/${encodeURIComponent(nodeRunId)}/control`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
   });
 }
 
-export function attachmentContentUrl(attachment: Attachment): string {
-  return `api/attachments/${encodeURIComponent(attachment.id)}/content`;
+export async function listNotifications(signal?: AbortSignal): Promise<ProjectNotification[]> {
+  const data = await request<{ notifications: ProjectNotification[] }>(
+    "/api/notifications",
+    signal ? { signal } : undefined,
+  );
+  return data.notifications;
 }
 
-export function attachmentDownloadUrl(attachment: Attachment): string {
-  return `api/attachments/${encodeURIComponent(attachment.id)}/download`;
+export async function updateNotification(
+  notificationId: string,
+  changes: { read?: boolean; handled?: boolean },
+): Promise<ProjectNotification> {
+  const data = await request<{ notification: ProjectNotification }>(
+    `/api/notifications/${encodeURIComponent(notificationId)}`,
+    { method: "PATCH", body: JSON.stringify(changes) },
+  );
+  return data.notification;
 }
 
-export function resolvePersistedAttachmentUrl(value: string): string {
-  if (/^\/?api\/attachments\/[^/?#]+\/content$/.test(value)) {
-    return resolveTaskboardUrl(value);
-  }
-  try {
-    const url = new URL(value);
-    const match = url.pathname.match(/\/api\/attachments\/([^/]+)\/content$/);
-    if (url.protocol === "http:" && url.hostname === "127.0.0.1" && match) {
-      return resolveTaskboardUrl(`/api/attachments/${match[1]}/content`);
-    }
-  } catch {
-    return value;
-  }
-  return value;
-}
-
-export function markdownIncludesAttachment(markdown: string, attachment: Attachment): boolean {
-  return markdown.includes(`api/attachments/${encodeURIComponent(attachment.id)}/content`);
+export async function actOnNotification(
+  notificationId: string,
+  action: string,
+  input: { comment?: string; reviewerAgentId?: string; dueAt?: string } = {},
+): Promise<{ command: GraphCommand; notification: ProjectNotification }> {
+  return request(
+    `/api/notifications/${encodeURIComponent(notificationId)}/actions/${encodeURIComponent(action)}`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
 }

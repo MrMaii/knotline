@@ -1,0 +1,166 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.trigger {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 46px;
+  margin: 4px 0 3px;
+  padding: 5px 7px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  box-shadow: none;
+  transition:
+    background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.trigger:hover {
+  border-color: transparent;
+  background: var(--dsw-specific-sidebar-nav-item-active-accent);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.trigger.active {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-specific-sidebar-nav-item-active-accent);
+  color: var(--dsw-alias-label-primary);
+}
+
+.trigger.active:hover {
+  background: var(--dsw-specific-sidebar-nav-item-active-accent);
+}
+
+.trigger.rail {
+  width: 42px;
+  min-height: 42px;
+  margin: 4px 0 3px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 12px;
+}
+
+.triggerIcon {
+  flex: none;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.triggerIcon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.triggerLogoDark {
+  display: none;
+}
+
+:global(body[data-ds-dark-theme]) .triggerLogoLight {
+  display: none;
+}
+
+:global(body[data-ds-dark-theme]) .triggerLogoDark {
+  display: block;
+}
+
+.rail .triggerIcon {
+  background: transparent;
+}
+
+.active .triggerIcon {
+  background: transparent;
+}
+
+.active.rail .triggerIcon {
+  background: transparent;
+}
+
+.triggerCopy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  align-content: center;
+}
+
+.triggerLabel {
+  overflow: hidden;
+  color: inherit;
+  font-weight: 550;
+  line-height: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.triggerHint {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.active .triggerHint {
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 400;
+  opacity: 1;
+}
+
+.triggerAction {
+  flex: none;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.active .triggerAction {
+  color: inherit;
+}
+
+.layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--knotline-sidebar-offset);
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+  transition: left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger,
+  .layer {
+    transition: none;
+  }
+}

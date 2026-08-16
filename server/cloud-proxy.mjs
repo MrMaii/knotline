@@ -46,7 +46,10 @@ function removeGitWorktreePaths(value) {
   }
 }
 
-async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
+async function prepareRequest(request, {
+  assertTaskProjectMoveAllowed,
+  resolveThreadBinding,
+} = {}) {
   const url = new URL(request.url);
   let projectWorkspace = null;
   let body = request.body;
@@ -61,8 +64,10 @@ async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
   );
   const isWorkflowMutation = request.method === "PUT"
     && /^\/api\/projects\/[^/]+\/workflow-workspace$/.test(url.pathname);
+  const isConversationMutation = request.method !== "GET"
+    && (/^\/api\/tasks(?:\/|$)/.test(url.pathname) || /^\/api\/comments\//.test(url.pathname));
 
-  if (isJson && (isProjectCreate || isTaskMutation || isWorkflowMutation)) {
+  if (isJson && (isProjectCreate || isTaskMutation || isWorkflowMutation || isConversationMutation)) {
     let payload;
     try {
       payload = await request.clone().json();
@@ -108,6 +113,15 @@ async function prepareRequest(request, { assertTaskProjectMoveAllowed } = {}) {
           ? {}
           : { branch: payload.developmentContext.branch }),
       };
+    }
+    if (
+      isConversationMutation
+      && typeof payload.threadId === "string"
+      && !Object.hasOwn(payload, "threadBinding")
+      && typeof resolveThreadBinding === "function"
+    ) {
+      const threadBinding = resolveThreadBinding(payload.threadId);
+      if (threadBinding) payload.threadBinding = threadBinding;
     }
     if (isWorkflowMutation) removeGitWorktreePaths(payload.workspace);
     body = JSON.stringify(payload);
@@ -202,6 +216,7 @@ export function createCloudProxy({
   fetch: fetchImplementation = globalThis.fetch,
   resolveDevelopmentContext,
   assertTaskProjectMoveAllowed,
+  resolveThreadBinding,
 }) {
   const readConfig = getConfig ?? (() => configStore.read());
   const setProjectWorkspace = configStore?.setProjectWorkspace?.bind(configStore);
@@ -238,12 +253,13 @@ export function createCloudProxy({
       headers.delete("connection");
       headers.delete("transfer-encoding");
       for (const name of [...headers.keys()]) {
-        if (name.toLowerCase().startsWith("x-taskboard-user-")) headers.delete(name);
+        if (name.toLowerCase().startsWith("x-knotline-user-")) headers.delete(name);
       }
       headers.set("authorization", basicAuthorization(config.actorName, config.sharedKey));
 
       const prepared = await prepareRequest(request, {
         assertTaskProjectMoveAllowed,
+        resolveThreadBinding,
       });
       if (prepared.projectWorkspace && !setProjectWorkspace) {
         throw new CloudProxyError(
@@ -270,7 +286,7 @@ export function createCloudProxy({
         throw new CloudProxyError(
           502,
           "REMOTE_UNAVAILABLE",
-          `Cannot reach cloud taskboard at ${remoteUrl}`,
+          `Cannot reach cloud knotline at ${remoteUrl}`,
           error instanceof Error ? error.message : String(error),
         );
       }

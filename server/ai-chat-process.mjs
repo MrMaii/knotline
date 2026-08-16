@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { withoutKnotlineLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { signalProcessTree } from "../shared/process-tree.mjs";
 
 const VISIBLE_TEXT_LIMIT = 65_536;
@@ -246,11 +246,11 @@ export function buildCodexPrompt(thread, { message, skills, attachmentPaths }, s
   );
 
   return [
-    `[$manage-taskboard](${skillPath}) e-taskboard`,
+    `[$manage-knotline](${skillPath}) e-knotline`,
     "",
-    "<taskboard_context>",
+    "<knotline_context>",
     ...context,
-    "</taskboard_context>",
+    "</knotline_context>",
     "",
     "<user_message>",
     userMessage,
@@ -343,7 +343,7 @@ export function spawnCodexTurn({
 }) {
   const child = spawn(process.execPath, [TURN_OWNER_PATH, executable, JSON.stringify(args)], {
     detached: true,
-    env: withoutTaskboardLauncherEnvironment(env),
+    env: withoutKnotlineLauncherEnvironment(env),
     stdio: ["pipe", "pipe", "pipe", "pipe"],
   });
 

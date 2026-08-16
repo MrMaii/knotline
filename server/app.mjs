@@ -17,7 +17,7 @@ import {
   isTaskStatus,
 } from "../shared/domain.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
-import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { withoutKnotlineLauncherEnvironment } from "../shared/codex-environment.mjs";
 import { executableCommand } from "../shared/executable-command.mjs";
 import { normalizeWorkflowSnapshot } from "../shared/workflow-control-flow.mjs";
 import { AiChatService } from "./ai-chat.mjs";
@@ -28,9 +28,14 @@ import {
   createCloudProxy,
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
-import { ApiError, TaskboardDatabase } from "./database.mjs";
+import { ApiError, KnotlineDatabase } from "./database.mjs";
+import { createGraphService } from "./graph-service.mjs";
+import { createGovernanceService } from "./governance-service.mjs";
+import { createNotificationService } from "./notification-service.mjs";
+import { createOrchestrationStore } from "./orchestration-store.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
+import { createKnowledgeService } from "./knowledge-service.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -422,6 +427,300 @@ function parseWorkflowWorkspaceSave(body) {
   };
 }
 
+function parseGraphLayout(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["projectId", "version", "x", "y", "width", "height"]));
+  const finiteNumber = (value, name, { required = true } = {}) => {
+    if (value === undefined && !required) return undefined;
+    if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1_000_000_000) {
+      throw new ApiError(400, "INVALID_FIELD", `'${name}' must be a finite number`);
+    }
+    return value;
+  };
+  const width = finiteNumber(body.width, "width", { required: false });
+  const height = finiteNumber(body.height, "height", { required: false });
+  if (width !== undefined && width <= 0) {
+    throw new ApiError(400, "INVALID_FIELD", "'width' must be greater than zero");
+  }
+  if (height !== undefined && height <= 0) {
+    throw new ApiError(400, "INVALID_FIELD", "'height' must be greater than zero");
+  }
+  return {
+    projectId: stringField(body.projectId, "projectId", { required: true, maxLength: 128 }),
+    version: parseWorkflowVersion(body.version),
+    x: finiteNumber(body.x, "x"),
+    y: finiteNumber(body.y, "y"),
+    width,
+    height,
+  };
+}
+
+function parseCanvasNodeAssignment(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["nodeId"]));
+  return {
+    nodeId: stringField(body.nodeId, "nodeId", { required: true, maxLength: 512 }),
+  };
+}
+
+function parseGraphResolve(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["sourceNodeId", "targetNodeId"]));
+  return {
+    sourceNodeId: stringField(body.sourceNodeId, "sourceNodeId", { required: true, maxLength: 256 }),
+    targetNodeId: stringField(body.targetNodeId, "targetNodeId", { required: true, maxLength: 256 }),
+  };
+}
+
+function parseGraphCommand(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set([
+    "sourceNodeId", "targetNodeId", "actionType", "idempotencyKey", "input",
+  ]));
+  if (![
+    "create_relation",
+    "create_task_relation",
+    "intake_demand",
+    "assign_reviewer",
+    "decide_review",
+    "create_change_request",
+    "decide_task_review",
+    "comment_on_task",
+    "reassign_task_review",
+    "postpone_task_review",
+    "create_team",
+    "execute_demand",
+    "remember_context",
+    "queue_demand",
+    "join_backlog",
+    "join_approval_pool",
+    "assign_artifact_review",
+    "assign_agent",
+    "bind_skill",
+    "connect_scheduled_trigger",
+    "bind_knowledge",
+    "attach_context",
+    "propose_knowledge_update",
+    "decide_execution_review",
+    "decide_knowledge_proposal",
+    "message_agent",
+  ].includes(body.actionType)) {
+    throw new ApiError(400, "INVALID_FIELD", "Unknown graph command action type");
+  }
+  assertPlainObject(body.input);
+  return {
+    sourceNodeId: stringField(body.sourceNodeId, "sourceNodeId", { required: true, maxLength: 256 }),
+    targetNodeId: stringField(body.targetNodeId, "targetNodeId", { required: true, maxLength: 256 }),
+    actionType: body.actionType,
+    idempotencyKey: stringField(body.idempotencyKey, "idempotencyKey", { required: true, maxLength: 256 }),
+    input: body.input,
+  };
+}
+
+function parseNotificationUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["read", "handled"]));
+  if (body.read !== undefined && typeof body.read !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'read' must be a boolean");
+  }
+  if (body.handled !== undefined && typeof body.handled !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'handled' must be a boolean");
+  }
+  if (body.read !== true && body.handled !== true) {
+    throw new ApiError(400, "INVALID_BODY", "Notification update must mark read or handled");
+  }
+  return { read: body.read === true, handled: body.handled === true };
+}
+
+function parseNotificationAction(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["comment", "reviewerAgentId", "dueAt", "idempotencyKey"]));
+  return {
+    comment: stringField(body.comment ?? "", "comment", { maxLength: 10_000 }),
+    reviewerAgentId: stringField(body.reviewerAgentId ?? null, "reviewerAgentId", { nullable: true, maxLength: 128 }),
+    dueAt: stringField(body.dueAt ?? null, "dueAt", { nullable: true, maxLength: 64 }),
+    idempotencyKey: stringField(body.idempotencyKey ?? null, "idempotencyKey", { nullable: true, maxLength: 256 }),
+  };
+}
+
+function parseAgentProfileCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["name", "role", "skillId", "provider", "model"]));
+  if (!["leader", "executor", "reviewer", "approver", "observer"].includes(body.role)) {
+    throw new ApiError(400, "INVALID_FIELD", "Unknown Agent role");
+  }
+  const skillId = stringField(body.skillId ?? null, "skillId", { nullable: true, maxLength: 256 });
+  return {
+    name: stringField(body.name, "name", { required: true, maxLength: 120 }),
+    role: body.role,
+    skillId: skillId || null,
+    provider: stringField(body.provider ?? null, "provider", { nullable: true, maxLength: 128 }) || null,
+    model: stringField(body.model ?? null, "model", { nullable: true, maxLength: 256 }) || null,
+  };
+}
+
+function parseAgentProfileRename(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["name"]));
+  return {
+    name: stringField(body.name, "name", { required: true, maxLength: 120 }),
+  };
+}
+
+function parseDemandCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["title", "description", "acceptanceCriteria"]));
+  if (!Array.isArray(body.acceptanceCriteria) || body.acceptanceCriteria.length > 20) {
+    throw new ApiError(400, "INVALID_FIELD", "'acceptanceCriteria' must be an array with at most 20 entries");
+  }
+  return {
+    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
+    description: stringField(body.description ?? "", "description", { maxLength: 20_000 }),
+    acceptanceCriteria: body.acceptanceCriteria.map((value, index) => stringField(
+      value,
+      `acceptanceCriteria[${index}]`,
+      { required: true, maxLength: 500 },
+    )),
+  };
+}
+
+function parseBacklogCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["title"]));
+  return {
+    title: stringField(body.title, "title", { required: true, maxLength: 120 }),
+  };
+}
+
+function parseSkillNodeCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["skillId"]));
+  return {
+    skillId: stringField(body.skillId, "skillId", { required: true, maxLength: 256 }),
+  };
+}
+
+function parseScheduledTriggerCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["prompt", "intervalMinutes", "enabled"]));
+  if (!Number.isInteger(body.intervalMinutes) || body.intervalMinutes < 1 || body.intervalMinutes > 525_600) {
+    throw new ApiError(400, "INVALID_FIELD", "'intervalMinutes' must be an integer from 1 to 525600");
+  }
+  if (typeof body.enabled !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'enabled' must be a boolean");
+  }
+  return {
+    prompt: stringField(body.prompt, "prompt", { required: true, maxLength: 50_000 }),
+    intervalMinutes: body.intervalMinutes,
+    enabled: body.enabled,
+  };
+}
+
+function parseScheduledTriggerUpdate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["enabled"]));
+  if (typeof body.enabled !== "boolean") {
+    throw new ApiError(400, "INVALID_FIELD", "'enabled' must be a boolean");
+  }
+  return { enabled: body.enabled };
+}
+
+function parseModelSelection(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["provider", "model", "reasoningEffort"]));
+  const reasoningEffort = stringField(body.reasoningEffort, "reasoningEffort", { maxLength: 128 });
+  return {
+    provider: stringField(body.provider, "provider", { required: true, maxLength: 128 }),
+    model: stringField(body.model, "model", { required: true, maxLength: 256 }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  };
+}
+
+function parseMapItemCreate(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["kind", "title", "content"]));
+  if (!["prompt", "question", "constraint", "background_material"].includes(body.kind)) {
+    throw new ApiError(400, "INVALID_FIELD", "Unknown Map item kind");
+  }
+  return {
+    kind: body.kind,
+    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
+    content: stringField(body.content ?? "", "content", { maxLength: 50_000 }),
+  };
+}
+
+function parseNodeRunRuntime(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["sessionId", "status", "error"]));
+  if (!["idle", "working", "waiting", "blocked", "paused", "offline"].includes(body.status)) {
+    throw new ApiError(400, "INVALID_FIELD", "Unknown Agent runtime status");
+  }
+  return {
+    sessionId: stringField(body.sessionId, "sessionId", { required: true, maxLength: 256 }),
+    status: body.status,
+    error: stringField(body.error ?? null, "error", { nullable: true, maxLength: 10_000 }),
+  };
+}
+
+function parseNodeRunProgress(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["status", "comment"]));
+  if (!["running", "waiting", "blocked"].includes(body.status)) {
+    throw new ApiError(400, "INVALID_FIELD", "Node progress status must be running, waiting, or blocked");
+  }
+  return {
+    status: body.status,
+    comment: stringField(body.comment ?? "", "comment", { maxLength: 10_000 }),
+  };
+}
+
+function parseNodeRunControl(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["action"]));
+  if (!["pause", "resume"].includes(body.action)) {
+    throw new ApiError(400, "INVALID_FIELD", "Task Bench action must be pause or resume");
+  }
+  return { action: body.action };
+}
+
+function parseDelivery(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["summary", "evidence"]));
+  return {
+    summary: stringField(body.summary, "summary", { required: true, maxLength: 20_000 }),
+    evidence: stringField(body.evidence ?? "", "evidence", { maxLength: 50_000 }),
+  };
+}
+
+function parseAgentRuntimeMessage(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["mode", "message"]));
+  if (!["followup", "steer", "inject"].includes(body.mode)) {
+    throw new ApiError(400, "INVALID_FIELD", "Agent message mode must be followup, steer, or inject");
+  }
+  return {
+    mode: body.mode,
+    message: stringField(body.message, "message", { required: true, maxLength: 50_000 }),
+  };
+}
+
+function parseKnowledgeInitialize(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["leaderAgentId"]));
+  return {
+    leaderAgentId: stringField(body.leaderAgentId, "leaderAgentId", { required: true, maxLength: 128 }),
+  };
+}
+
+function parseKnowledgeProposal(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["title", "content"]));
+  return {
+    title: stringField(body.title, "title", { required: true, maxLength: 240 }),
+    content: stringField(body.content, "content", { required: true, maxLength: 100_000 }),
+  };
+}
+
 function parseSortOrder(value) {
   if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1_000_000_000_000) {
     throw new ApiError(400, "INVALID_FIELD", "'sortOrder' must be a finite number between -1000000000000 and 1000000000000");
@@ -506,19 +805,69 @@ function parseThreadId(value) {
   return stringField(value, "threadId", { required: true, maxLength: 256 });
 }
 
+function parseThreadBinding(value) {
+  if (value === undefined || value === null) return value;
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set([
+    "threadId",
+    "codexProjectId",
+    "codexProjectKind",
+    "codexHostId",
+    "workspacePath",
+  ]));
+  const threadId = stringField(value.threadId, "threadBinding.threadId", {
+    required: true,
+    maxLength: 256,
+  });
+  const identityFields = [
+    value.codexProjectId,
+    value.codexProjectKind,
+    value.codexHostId,
+    value.workspacePath,
+  ];
+  if (identityFields.every((field) => field === undefined)) return { threadId };
+  if (identityFields.some((field) => field === undefined)) {
+    throw new ApiError(400, "INVALID_FIELD", "Thread identity must include project, kind, host, and workspace");
+  }
+  const codexProjectId = stringField(value.codexProjectId, "threadBinding.codexProjectId", {
+    required: true,
+    maxLength: 256,
+  });
+  const codexProjectKind = value.codexProjectKind;
+  const codexHostId = stringField(value.codexHostId, "threadBinding.codexHostId", {
+    required: true,
+    maxLength: 256,
+  });
+  const workspacePath = stringField(value.workspacePath, "threadBinding.workspacePath", {
+    required: true,
+    maxLength: 4096,
+  });
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw new ApiError(400, "INVALID_FIELD", "threadBinding.codexProjectKind must be local or remote");
+  }
+  if (
+    (codexProjectKind === "local" && codexHostId !== "local")
+    || (codexProjectKind === "remote" && codexHostId === "local")
+    || workspacePath.includes("\0")
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", "Thread project identity is invalid");
+  }
+  return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
+}
+
 function requestHeader(request, name) {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
 }
 
 function actorFromRequest(request) {
-  if (request.headers["x-taskboard-client"] === "taskctl") {
+  if (request.headers["x-knotline-client"] === "knotctl") {
     return CODEX_AGENT_ACTOR;
   }
 
-  const rawId = requestHeader(request, "x-taskboard-user-id");
-  const rawName = requestHeader(request, "x-taskboard-user-name");
-  const rawAvatarUrl = requestHeader(request, "x-taskboard-user-avatar");
+  const rawId = requestHeader(request, "x-knotline-user-id");
+  const rawName = requestHeader(request, "x-knotline-user-name");
+  const rawAvatarUrl = requestHeader(request, "x-knotline-user-avatar");
   if (rawId === undefined && rawName === undefined && rawAvatarUrl === undefined) {
     return { type: "user", id: "local-user", name: "本地用户", avatarUrl: null };
   }
@@ -526,7 +875,7 @@ function actorFromRequest(request) {
     throw new ApiError(400, "INVALID_ACTOR", "User identity requires both an ID and name");
   }
 
-  const id = stringField(rawId, "X-Taskboard-User-Id", { required: true, maxLength: 96 });
+  const id = stringField(rawId, "X-Knotline-User-Id", { required: true, maxLength: 96 });
   if (!/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(id)) {
     throw new ApiError(400, "INVALID_ACTOR", "User ID contains unsupported characters");
   }
@@ -536,11 +885,11 @@ function actorFromRequest(request) {
   } catch {
     throw new ApiError(400, "INVALID_ACTOR", "User name is not valid URL-encoded text");
   }
-  const name = stringField(decodedName, "X-Taskboard-User-Name", { required: true, maxLength: 120 });
+  const name = stringField(decodedName, "X-Knotline-User-Name", { required: true, maxLength: 120 });
 
   let avatarUrl = null;
   if (rawAvatarUrl !== undefined) {
-    const value = stringField(rawAvatarUrl, "X-Taskboard-User-Avatar", { required: true, maxLength: 2048 });
+    const value = stringField(rawAvatarUrl, "X-Knotline-User-Avatar", { required: true, maxLength: 2048 });
     let parsed;
     try {
       parsed = new URL(value);
@@ -583,7 +932,7 @@ function parseWorkflowId(value) {
 function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId",
+    "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId", "threadBinding",
     "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
@@ -596,6 +945,7 @@ function parseTaskCreate(body) {
     labels: body.labels === undefined ? [] : parseLabels(body.labels),
     sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     workflowId: parseWorkflowId(body.workflowId ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
@@ -612,11 +962,12 @@ function parseTaskCreate(body) {
 function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId",
+    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
     "assigneeTarget", "workflowId", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
+  const threadBinding = parseThreadBinding(body.threadBinding);
   const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
   const changes = {};
   if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
@@ -636,24 +987,29 @@ function parseTaskPatch(body) {
   if (Object.keys(changes).length === 0 && assigneeTarget === undefined) {
     throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one task field");
   }
-  return { version, changes, threadId, assigneeTarget };
+  return { version, changes, threadId, threadBinding, assigneeTarget };
 }
 
 function parseMove(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId"]));
+  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId", "threadBinding"]));
   return {
     version: parseVersion(body.version),
     status: parseStatus(body.status),
     sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
   };
 }
 
 function parseArchive(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId"]));
-  return { version: parseVersion(body.version), threadId: parseThreadId(body.threadId) };
+  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding"]));
+  return {
+    version: parseVersion(body.version),
+    threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
+  };
 }
 
 function parseIssueRelationType(value) {
@@ -669,16 +1025,17 @@ function parseIssueRelationType(value) {
 
 function parseCommentCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["body", "threadId"]));
+  assertAllowedKeys(body, new Set(["body", "threadId", "threadBinding"]));
   return {
     body: stringField(body.body ?? "", "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
   };
 }
 
 function parseCommentPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "body", "threadId"]));
+  assertAllowedKeys(body, new Set(["version", "body", "threadId", "threadBinding"]));
   if (body.body === undefined) {
     throw new ApiError(400, "INVALID_FIELD", "'body' is required");
   }
@@ -686,13 +1043,14 @@ function parseCommentPatch(body) {
     version: parseVersion(body.version),
     body: stringField(body.body, "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
   };
 }
 
 function parseAttachmentHeaders(request) {
-  const encodedFilename = request.headers["x-taskboard-filename"];
+  const encodedFilename = request.headers["x-knotline-filename"];
   if (typeof encodedFilename !== "string") {
-    throw new ApiError(400, "INVALID_FILENAME", "X-Taskboard-Filename is required");
+    throw new ApiError(400, "INVALID_FILENAME", "X-Knotline-Filename is required");
   }
   let filename;
   try {
@@ -1112,7 +1470,7 @@ function parseWorktrees(output) {
 
 async function scanDevelopmentContexts(workspacePath, processEnv = process.env) {
   if (!workspacePath) return { workspacePath: null, contexts: [] };
-  const environment = withoutTaskboardLauncherEnvironment(processEnv);
+  const environment = withoutKnotlineLauncherEnvironment(processEnv);
   try {
     const rootResult = await execFileAsync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"], {
       env: environment,
@@ -1222,7 +1580,7 @@ async function discoverSkills(codexExecutable, workspacePath, processEnv) {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "codex-taskboard", version: "0.1.0" },
+          clientInfo: { name: "knotline", version: "0.1.0" },
           capabilities: { experimentalApi: true },
         },
       });
@@ -1297,32 +1655,33 @@ async function discoverWorkflowCapabilities(resolved, workspacePath, processEnv)
 }
 
 export function resolveServerOptions(options = {}) {
-  const configuredDataDirectory = options.dataDirectory ?? process.env.CODEX_TASKBOARD_DATA_DIR;
+  const configuredDataDirectory = options.dataDirectory ?? process.env.KNOTLINE_DATA_DIR;
   const dataDirectory = configuredDataDirectory
     ? path.resolve(configuredDataDirectory)
     : path.join(PROJECT_ROOT, ".data");
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
   const instanceToken = String(
-    options.instanceToken ?? process.env.CODEX_TASKBOARD_INSTANCE_TOKEN ?? "",
+    options.instanceToken ?? process.env.KNOTLINE_INSTANCE_TOKEN ?? "",
   ).trim();
   if (instanceToken && !/^[a-z0-9-]{16,128}$/i.test(instanceToken)) {
-    throw new Error("CODEX_TASKBOARD_INSTANCE_TOKEN must be an identifier");
+    throw new Error("KNOTLINE_INSTANCE_TOKEN must be an identifier");
   }
   const instanceSecret = String(
-    options.instanceSecret ?? process.env.CODEX_TASKBOARD_INSTANCE_SECRET ?? "",
+    options.instanceSecret ?? process.env.KNOTLINE_INSTANCE_SECRET ?? "",
   ).trim();
   if (instanceToken && !/^[a-f0-9-]{32,128}$/i.test(instanceSecret)) {
-    throw new Error("CODEX_TASKBOARD_INSTANCE_SECRET must be set in launcher mode");
+    throw new Error("KNOTLINE_INSTANCE_SECRET must be set in launcher mode");
   }
   return {
+    dshMode: options.dshMode === true,
     dataDirectory,
-    databasePath: options.databasePath ?? path.join(dataDirectory, "taskboard.sqlite"),
+    databasePath: options.databasePath ?? path.join(dataDirectory, "knotline.sqlite"),
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
-    skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-taskboard", "SKILL.md"),
+    skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-knotline", "SKILL.md"),
     codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
@@ -1331,36 +1690,619 @@ export function resolveServerOptions(options = {}) {
     instanceToken,
     instanceSecret,
     version: String(
-      options.version ?? process.env.CODEX_TASKBOARD_VERSION ?? "development",
+      options.version ?? process.env.KNOTLINE_VERSION ?? "development",
     ).trim(),
   };
 }
 
-export function resolvePort(value = process.env.CODEX_TASKBOARD_PORT ?? "47823") {
+export function resolvePort(value = process.env.KNOTLINE_PORT ?? "47823") {
   const port = typeof value === "number" ? value : Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("CODEX_TASKBOARD_PORT must be an integer between 1 and 65535");
+    throw new Error("KNOTLINE_PORT must be an integer between 1 and 65535");
   }
   return port;
 }
 
-export function resolveHost(value = process.env.CODEX_TASKBOARD_HOST ?? "0.0.0.0") {
+export function resolveHost(value = process.env.KNOTLINE_HOST ?? "0.0.0.0") {
   const host = String(value).trim();
   if (host !== "127.0.0.1" && host !== "0.0.0.0") {
-    throw new Error("CODEX_TASKBOARD_HOST must be 127.0.0.1 or 0.0.0.0");
+    throw new Error("KNOTLINE_HOST must be 127.0.0.1 or 0.0.0.0");
   }
   return host;
 }
 
-export function createTaskboardServer(options = {}) {
+export function createKnotlineServer(options = {}) {
   const resolved = resolveServerOptions(options);
-  const codexProcessEnvironment = withoutTaskboardLauncherEnvironment(
+  const codexProcessEnvironment = withoutKnotlineLauncherEnvironment(
     options.processEnv ?? process.env,
   );
   const routePrefix = resolved.instanceToken ? `/${resolved.instanceToken}` : "";
-  const database = new TaskboardDatabase(resolved.databasePath);
+  const database = new KnotlineDatabase(resolved.databasePath);
+  const orchestration = createOrchestrationStore(database);
+  const knowledge = createKnowledgeService(database, orchestration);
+  const governance = createGovernanceService(database);
+  const notifications = createNotificationService(database);
+  const graph = createGraphService(database, {
+    runtimeProvider: options.agentRuntimeProvider,
+    governance,
+    orchestration,
+    knowledge,
+    messageAgent: options.agentOrchestrator?.messageAgent,
+  });
   const events = new EventHub();
   let clientStorageWrite = Promise.resolve();
+  let scheduledTriggerDispatching = false;
+
+  async function dispatchScheduledTriggers() {
+    if (scheduledTriggerDispatching || !options.agentOrchestrator?.startNodeRun) return;
+    scheduledTriggerDispatching = true;
+    try {
+      for (const trigger of database.listDueScheduledTriggers()) {
+        const targets = database.listGraphEdges(trigger.projectId)
+          .filter((edge) => (
+            edge.sourceNodeId === `scheduled_trigger:${trigger.id}`
+            && edge.relationType === "scheduled_for"
+            && edge.state === "active"
+            && edge.targetNodeId.startsWith("agent_profile:")
+          ))
+          .map((edge) => edge.targetNodeId.slice("agent_profile:".length));
+        if (targets.length === 0) continue;
+        const fired = database.recordScheduledTriggerFired(trigger.id);
+        for (const agentProfileId of targets) {
+          const title = `Scheduled: ${trigger.prompt.split(/\r?\n/, 1)[0].slice(0, 220)}`;
+          const instruction = `${trigger.prompt}\nScheduled trigger fired at: ${fired.lastTriggeredAt}`;
+          const run = orchestration.createStandaloneRun(agentProfileId, title, instruction);
+          events.emit("task.created", { projectId: trigger.projectId, task: run.task });
+          events.emit("node_run.queued", { projectId: trigger.projectId, nodeRun: run.nodeRun });
+          await options.agentOrchestrator.startNodeRun(run.nodeRun.id);
+        }
+        events.emit("graph.node.updated", {
+          projectId: trigger.projectId,
+          entityType: "scheduled_trigger",
+          entityId: fired.id,
+        });
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      scheduledTriggerDispatching = false;
+    }
+  }
+
+  const scheduledTriggerTimer = setInterval(() => void dispatchScheduledTriggers(), 1_000);
+  scheduledTriggerTimer.unref?.();
+
+  function emitNotification(notification) {
+    events.emit("notification.created", { projectId: notification.projectId, notification });
+    return notification;
+  }
+
+  function emitContextAttached(projectId, result) {
+    if (result.demand) {
+      events.emit("graph.node.updated", { projectId, entityType: "demand", entityId: result.demand.id });
+    }
+    events.emit("graph.node.updated", { projectId, entityType: "knowledge_asset", entityId: result.asset.id });
+    events.emit("graph.node.updated", { projectId, entityType: "agent_profile", entityId: result.agent.id });
+    events.emit("knowledge.updated", {
+      projectId,
+      asset: result.asset,
+      knowledgeVersion: result.knowledgeVersion,
+      knowledgeBinding: result.knowledgeBinding,
+    });
+    if (result.directEdge) events.emit("graph.edge.updated", { projectId, edge: result.directEdge });
+    if (result.contextEdge) events.emit("graph.edge.updated", { projectId, edge: result.contextEdge });
+    if (!result.runtimeProduced) {
+      void options.agentOrchestrator?.rememberContext?.(
+        result.agent.id,
+        result.asset.title,
+        result.knowledgeVersion.content,
+      )?.catch((error) => {
+        console.warn("Knotline could not append Context Document to the Agent conversation", error);
+      });
+    }
+  }
+
+  function publishTaskStatusNotification(task, previousStatus, actor) {
+    if (task.status === previousStatus) return null;
+    const reviewers = database.listAgentProfiles(task.projectId).filter((agent) => agent.role === "reviewer");
+    const assignedReviewer = task.assignee.type === "agent"
+      ? reviewers.find((reviewer) => reviewer.id === task.assignee.id)
+      : null;
+    if (task.status === "in_review") {
+      return emitNotification(notifications.publish("review.requested", {
+        projectId: task.projectId,
+        entityType: "task",
+        entityId: task.id,
+        graphNodeId: `task:${task.id}`,
+        actor,
+        reviewerAgentId: assignedReviewer?.id ?? reviewers[0]?.id ?? null,
+        title: `${task.identifier} is ready for review`,
+        body: task.title,
+        reason: "This Task entered in_review and requires an independent decision.",
+        dueAt: task.dueDate,
+        impact: "Delivery waits until the review is approved or changes are requested.",
+        context: {
+          taskNodeId: `task:${task.id}`,
+          reviewerOptions: reviewers.map((reviewer) => ({ id: reviewer.id, name: reviewer.name })),
+        },
+        dedupeKey: `task-review:${task.id}:${task.version}`,
+      }));
+    }
+    if (task.status === "done") {
+      return emitNotification(notifications.publish("task.completed", {
+        projectId: task.projectId,
+        entityType: "task",
+        entityId: task.id,
+        graphNodeId: `task:${task.id}`,
+        actor,
+        title: `${task.identifier} completed`,
+        body: task.title,
+        reason: "This Task reached done.",
+        dueAt: task.dueDate,
+        impact: "The Task is now reflected as complete across Map, Board, List, Gantt, and Dashboard.",
+        context: { taskNodeId: `task:${task.id}` },
+        dedupeKey: `task-completed:${task.id}:${task.version}`,
+      }));
+    }
+    return null;
+  }
+
+  function requireNodeRun(id) {
+    const nodeRun = orchestration.getNodeRun(id);
+    if (!nodeRun) throw new ApiError(404, "NODE_RUN_NOT_FOUND", `Node Run '${id}' does not exist`);
+    return nodeRun;
+  }
+
+  function updateExecutionProgress(nodeRunId, input, actor) {
+    const current = requireNodeRun(nodeRunId);
+    const nodeRunStatus = input.status === "running" ? "running" : "waiting_input";
+    const nodeRun = orchestration.updateNodeRun(nodeRunId, {
+      status: nodeRunStatus,
+      error: input.status === "blocked" ? input.comment || "Blocked" : null,
+    });
+    const task = database.getTask(current.taskId);
+    const taskStatus = input.status === "blocked" ? "blocked" : "in_progress";
+    const updatedTask = task.status === taskStatus
+      ? task
+      : database.moveTask(task.id, task.version, taskStatus, undefined, undefined, undefined, actor);
+    if (input.comment) database.createComment(task.id, { body: input.comment, actor });
+    const binding = orchestration.updateBinding(current.agentProfileId, {
+      currentNodeRunId: current.id,
+      status: input.status === "running" ? "working" : input.status,
+      lastError: input.status === "blocked" ? input.comment || "Blocked" : null,
+    });
+    const workstream = input.status === "running"
+      ? database.setWorkstreamStatus(current.workstreamId, "executing")
+      : database.getWorkstream(current.workstreamId);
+    return { nodeRun, task: updatedTask, binding, workstream };
+  }
+
+  function submitExecutionForReview(nodeRunId, delivery, actor) {
+    const current = requireNodeRun(nodeRunId);
+    if (!current.workstreamId) {
+      const approvalMatch = current.instruction.match(
+        /<knotline_approval_execution artifact_id="([^"]+)" pool_id="([^"]+)">/,
+      );
+      const completed = knowledge.completeContextualization(nodeRunId, delivery, actor)
+        ?? knowledge.completeKnowledgeSync(nodeRunId, delivery)
+        ?? knowledge.completeStandaloneNodeRun(nodeRunId, delivery);
+      return {
+        ...completed,
+        approvalExecution: approvalMatch ? {
+          artifact: database.getRequestArtifact(approvalMatch[1]),
+          approvalPool: database.getApprovalPool(approvalMatch[2]),
+        } : null,
+        nextAssignment: graph.scheduleAgentWork(current.projectId, current.agentProfileId, actor),
+      };
+    }
+    const nodeRun = orchestration.updateNodeRun(nodeRunId, { status: "waiting_review", result: delivery, error: null });
+    const requestArtifacts = database.completeRequestArtifacts(nodeRunId, delivery);
+    const task = database.getTask(current.taskId);
+    const updatedTask = task.status === "in_review"
+      ? task
+      : database.moveTask(task.id, task.version, "in_review", undefined, undefined, undefined, actor);
+    const workstream = database.setWorkstreamStatus(current.workstreamId, "acceptance");
+    const binding = orchestration.updateBinding(current.agentProfileId, {
+      currentNodeRunId: current.id,
+      status: "waiting",
+      lastError: null,
+    });
+    const review = knowledge.requestExecutionReview(nodeRunId);
+    const approvalDeposit = graph.storeApprovalArtifacts(
+      current.projectId,
+      current.agentProfileId,
+      requestArtifacts,
+      actor,
+    );
+    const nextAssignment = graph.scheduleAgentWork(current.projectId, current.agentProfileId, actor);
+    const reviewerOptions = governance.projectState(current.projectId).agents
+      .filter((agent) => agent.id !== current.agentProfileId)
+      .map((agent) => ({ id: agent.id, name: agent.name }));
+    emitNotification(notifications.publish("review.requested", {
+      projectId: current.projectId,
+      entityType: "review_gate",
+      entityId: review.reviewGate.id,
+      graphNodeId: `review_gate:${review.reviewGate.id}`,
+      actor,
+      reviewerAgentId: review.reviewGate.reviewerAgentId,
+      title: `${workstream.title} delivery requires independent review`,
+      body: delivery.summary,
+      reason: "The assigned execution Agent submitted delivery evidence and cannot self-approve.",
+      impact: "Approval creates a Delivery; rejection creates a Rework Node Run.",
+      actions: review.reviewGate.reviewerAgentId
+        ? ["open", "approve", "reject", "ask", "reassign", "postpone"]
+        : ["open", "reassign"],
+      context: {
+        executionReview: true,
+        reviewGateNodeId: `review_gate:${review.reviewGate.id}`,
+        workstreamNodeId: `workstream:${workstream.id}`,
+        nodeRunNodeId: `node_run:${nodeRun.id}`,
+        taskNodeId: `task:${updatedTask.id}`,
+        reviewerOptions,
+      },
+      dedupeKey: `execution-review:${review.reviewGate.id}:${review.reviewGate.version}`,
+    }));
+    return {
+      nodeRun,
+      task: updatedTask,
+      binding,
+      workstream,
+      reviewGate: review.reviewGate,
+      requestArtifacts,
+      approvalDeposit,
+      nextAssignment,
+    };
+  }
+
+  function publishKnowledgeProposalNotification(proposal, asset, actor) {
+    return emitNotification(notifications.publish("decision.required", {
+      projectId: proposal.projectId,
+      entityType: "knowledge_proposal",
+      entityId: proposal.id,
+      graphNodeId: `knowledge_proposal:${proposal.id}`,
+      actor,
+      title: proposal.title,
+      body: proposal.content,
+      reason: "A Delivery or Agent proposed a new Project Knowledge version.",
+      impact: "Approval publishes a new version and marks older Agent bindings stale.",
+      context: {
+        knowledgeProposalNodeId: `knowledge_proposal:${proposal.id}`,
+        knowledgeNodeId: `knowledge_asset:${asset.id}`,
+        deliveryNodeId: proposal.deliveryId ? `delivery:${proposal.deliveryId}` : null,
+      },
+      dedupeKey: `knowledge-proposal:${proposal.id}:${proposal.version}`,
+    }));
+  }
+
+  async function projectContextForNodeRun(nodeRunId) {
+    const nodeRun = requireNodeRun(nodeRunId);
+    const project = database.getProject(nodeRun.projectId);
+    const workspacePath = project?.workspacePath ? path.resolve(project.workspacePath) : null;
+    const files = [];
+    if (workspacePath) {
+      const rootEntries = await readdir(workspacePath, { withFileTypes: true });
+      let docEntries = [];
+      try {
+        docEntries = await readdir(path.join(workspacePath, "docs"), { withFileTypes: true });
+      } catch {
+        // Documentation directory is optional.
+      }
+      const candidates = [
+        ...rootEntries
+          .filter((entry) => entry.isFile() && /^(AGENTS\.md|README[^/]*\.md|package\.json)$/i.test(entry.name))
+          .map((entry) => entry.name),
+        ...docEntries
+          .filter((entry) => entry.isFile() && /\.md$/i.test(entry.name))
+          .map((entry) => `docs/${entry.name}`),
+        "server/app.mjs",
+        "server/database.mjs",
+        "server/graph-service.mjs",
+        "server/governance-service.mjs",
+        "server/knowledge-service.mjs",
+        "server/orchestration-store.mjs",
+        "src/host/index.ts",
+        "web/src/App.tsx",
+      ]
+        .filter((entry, index, entries) => entries.indexOf(entry) === index)
+        .sort((left, right) => left.localeCompare(right))
+        .slice(0, 18);
+      for (const relativePath of candidates) {
+        const absolutePath = path.resolve(workspacePath, relativePath);
+        if (absolutePath !== workspacePath && !absolutePath.startsWith(`${workspacePath}${path.sep}`)) continue;
+        try {
+          const info = await stat(absolutePath);
+          if (!info.isFile()) continue;
+          const content = await readFile(absolutePath, "utf8");
+          files.push({ path: relativePath, content: content.slice(0, 12_000) });
+        } catch {
+          // The project may change while the snapshot is assembled.
+        }
+      }
+    }
+    const runtimeSessions = await (options.agentRuntimeProvider?.() ?? []);
+    const normalizedWorkspace = workspacePath?.replaceAll("\\", "/").toLowerCase();
+    const sessions = runtimeSessions.filter((session) => (
+      normalizedWorkspace
+      && session.cwd?.replaceAll("\\", "/").toLowerCase() === normalizedWorkspace
+    )).slice(0, 50);
+    const snapshot = {
+      project,
+      tasks: database.listTasks({ projectId: nodeRun.projectId, archived: "false" }).map((task) => ({
+        id: task.id,
+        identifier: task.identifier,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+      })),
+      governance: governance.projectState(nodeRun.projectId),
+      knowledge: knowledge.projectState(nodeRun.projectId),
+      sessions,
+      files,
+    };
+    return [
+      "Grounded Knotline Project Context",
+      "Use only these observed facts. Identify gaps explicitly.",
+      JSON.stringify(snapshot, null, 2),
+    ].join("\n\n");
+  }
+
+  function emitGraphCommandEvents(projectId, command, actor) {
+    const result = command.result;
+    if (result?.kind === "graph_edge") {
+      events.emit("graph.edge.updated", { projectId, edge: result.edge });
+    }
+    if (result?.kind === "task_relation") {
+      events.emit("task.relation.updated", {
+        projectId,
+        task: result.task,
+        relatedTask: result.relatedTask,
+      });
+    }
+    if (result?.kind === "workstream_intake") {
+      events.emit("workstream.updated", { projectId, workstream: result.workstream });
+      events.emit("review.requested", { projectId, reviewGate: result.reviewGate });
+    }
+    if (result?.kind === "agent_team_created") {
+      events.emit("graph.node.updated", { projectId, entityType: "agent_profile", entityId: result.team.id });
+      events.emit("graph.node.updated", { projectId, entityType: result.plan.kind, entityId: result.plan.id });
+      events.emit("graph.node.updated", { projectId, entityType: result.protocol.kind, entityId: result.protocol.id });
+    }
+    if (result?.kind === "skill_binding") {
+      events.emit("graph.node.updated", { projectId, entityType: "agent_profile", entityId: result.agent.id });
+    }
+    if (result?.kind === "scheduled_trigger_connected") {
+      events.emit("graph.edge.updated", { projectId, edge: result.edge });
+      events.emit("graph.node.updated", { projectId, entityType: "scheduled_trigger", entityId: result.trigger.id });
+    }
+    if (result?.kind === "review_assigned") {
+      events.emit("review.requested", { projectId, reviewGate: result.reviewGate });
+      emitNotification(notifications.publish("review.requested", {
+        projectId,
+        entityType: "review_gate",
+        entityId: result.reviewGate.id,
+        graphNodeId: `review_gate:${result.reviewGate.id}`,
+        actor,
+        reviewerAgentId: result.reviewGate.reviewerAgentId,
+        title: `${result.workstream.title} requires review`,
+        body: "Review the Workstream scope, risks, acceptance criteria, deliverables, and evidence.",
+        reason: "You are the assigned independent Reviewer.",
+        impact: "Formal execution cannot start before approval.",
+        context: {
+          reviewGateNodeId: `review_gate:${result.reviewGate.id}`,
+          workstreamNodeId: `workstream:${result.workstream.id}`,
+          reviewerOptions: governance.projectState(projectId).agents
+            .filter((agent) => agent.role === "reviewer")
+            .map((agent) => ({ id: agent.id, name: agent.name })),
+        },
+        dedupeKey: `review-requested:${result.reviewGate.id}:${result.reviewGate.version}`,
+      }));
+    }
+    if (result?.kind === "review_decision") {
+      events.emit("review.completed", { projectId, reviewGate: result.reviewGate, workstream: result.workstream });
+      events.emit("workstream.updated", { projectId, workstream: result.workstream });
+      const eventType = result.reviewGate.status === "approved" ? "review.approved" : "review.rejected";
+      emitNotification(notifications.publish(eventType, {
+        projectId,
+        entityType: "review_gate",
+        entityId: result.reviewGate.id,
+        graphNodeId: `review_gate:${result.reviewGate.id}`,
+        actor,
+        title: `${result.workstream.title} review ${result.reviewGate.status}`,
+        body: result.decision.comment || "Review decision recorded.",
+        reason: "The assigned Reviewer completed the governance decision.",
+        impact: result.reviewGate.status === "approved"
+          ? "The Workstream can now be staffed."
+          : "The Workstream returned to draft.",
+        context: {
+          reviewGateNodeId: `review_gate:${result.reviewGate.id}`,
+          workstreamNodeId: `workstream:${result.workstream.id}`,
+        },
+        dedupeKey: `review-completed:${result.reviewGate.id}:${result.reviewGate.version}`,
+      }));
+    }
+    if (result?.kind === "change_request") {
+      events.emit("workstream.scope_changed", { projectId, changeRequest: result.changeRequest });
+      emitNotification(notifications.publish("workstream.scope_changed", {
+        projectId,
+        entityType: "change_request",
+        entityId: result.changeRequest.id,
+        graphNodeId: `change_request:${result.changeRequest.id}`,
+        actor,
+        title: result.changeRequest.title,
+        body: result.changeRequest.description,
+        reason: "A new Demand targeted an already-approved Workstream.",
+        impact: "Approved scope remains unchanged until this Change Request is reviewed.",
+        context: { workstreamNodeId: `workstream:${result.workstream.id}` },
+        dedupeKey: `change-request:${result.changeRequest.id}`,
+      }));
+    }
+    if (["agent_assignment", "demand_assignment", "context_assignment", "artifact_review_assignment"].includes(result?.kind)) {
+      events.emit("task.created", { projectId, task: result.task });
+      events.emit("node_run.queued", { projectId, nodeRun: result.nodeRun });
+      if (result.workstream) events.emit("workstream.updated", { projectId, workstream: result.workstream });
+      events.emit("agent.runtime.updated", { projectId, binding: result.binding });
+      if (["demand_assignment", "context_assignment"].includes(result.kind)) {
+        events.emit("graph.node.updated", { projectId, entityType: "demand", entityId: result.demand.id });
+        for (const artifact of result.artifacts ?? []) {
+          events.emit("graph.node.updated", { projectId, entityType: "request_artifact", entityId: artifact.id });
+        }
+        if (result.delegationEdge) events.emit("graph.edge.updated", { projectId, edge: result.delegationEdge });
+        if (result.directEdge) events.emit("graph.edge.updated", { projectId, edge: result.directEdge });
+        if (result.queueEdge) events.emit("graph.edge.updated", { projectId, edge: result.queueEdge });
+        if (result.workerEdge) events.emit("graph.edge.updated", { projectId, edge: result.workerEdge });
+        for (const cached of result.cachedEdges ?? []) {
+          if (cached.directEdge) events.emit("graph.edge.updated", { projectId, edge: cached.directEdge });
+          if (cached.queueEdge) events.emit("graph.edge.updated", { projectId, edge: cached.queueEdge });
+        }
+      }
+      if (result.kind === "artifact_review_assignment") {
+        events.emit("review.requested", { projectId, reviewGate: result.reviewGate });
+        emitNotification(notifications.publish("review.requested", {
+          projectId,
+          entityType: "review_gate",
+          entityId: result.reviewGate.id,
+          graphNodeId: `review_gate:${result.reviewGate.id}`,
+          actor,
+          reviewerAgentId: result.reviewGate.reviewerAgentId,
+          title: `${result.workstream.title} delivery is ready for independent review`,
+          body: result.nodeRun.instruction,
+          reason: "You are the assigned independent Reviewer for this delivery.",
+          impact: "Approval creates a Delivery; rejection creates a Rework Node Run.",
+          context: {
+            executionReview: true,
+            reviewGateNodeId: `review_gate:${result.reviewGate.id}`,
+            workstreamNodeId: `workstream:${result.workstream.id}`,
+            nodeRunNodeId: `node_run:${result.nodeRun.id}`,
+            taskNodeId: `task:${result.task.id}`,
+            reviewerOptions: governance.projectState(projectId).agents
+              .filter((agent) => agent.id !== requireNodeRun(result.reviewGate.nodeRunId).agentProfileId)
+              .map((agent) => ({ id: agent.id, name: agent.name })),
+          },
+          dedupeKey: `execution-review-assigned:${result.reviewGate.id}:${result.reviewGate.version}`,
+        }));
+      }
+    }
+    if (["backlog_demand_queued", "backlog_agent_joined", "direct_demand_queued", "direct_demand_cached"].includes(result?.kind)) {
+      events.emit("graph.edge.updated", { projectId, edge: result.edge });
+      for (const cached of result.cachedEdges ?? []) {
+        if (cached.directEdge) events.emit("graph.edge.updated", { projectId, edge: cached.directEdge });
+        if (cached.queueEdge) events.emit("graph.edge.updated", { projectId, edge: cached.queueEdge });
+      }
+    }
+    if (result?.kind === "approval_assignment") {
+      events.emit("task.created", { projectId, task: result.task });
+      events.emit("node_run.queued", { projectId, nodeRun: result.nodeRun });
+      events.emit("agent.runtime.updated", { projectId, binding: result.binding });
+      events.emit("graph.node.updated", { projectId, entityType: "request_artifact", entityId: result.approvalArtifact.id });
+      events.emit("graph.node.updated", { projectId, entityType: "approval_pool", entityId: result.approvalPool.id });
+      events.emit("graph.edge.updated", { projectId, edge: result.approvalEdge });
+    }
+    if (result?.kind === "approval_pool_agent_joined") {
+      events.emit("graph.edge.updated", { projectId, edge: result.edge });
+    }
+    if (result?.approvalWorkerEdge) {
+      events.emit("graph.edge.updated", { projectId, edge: result.approvalWorkerEdge });
+    }
+    if (result?.kind === "knowledge_binding") {
+      events.emit("knowledge.updated", {
+        projectId,
+        asset: result.asset,
+        knowledgeBinding: result.knowledgeBinding,
+      });
+      events.emit("task.created", { projectId, task: result.task });
+      events.emit("node_run.queued", { projectId, nodeRun: result.nodeRun });
+    }
+    if (result?.kind === "context_attached") {
+      emitContextAttached(projectId, result);
+    }
+    if (result?.kind === "agent_message") {
+      events.emit("graph.node.updated", {
+        projectId,
+        entityType: result.mapItem.kind,
+        entityId: result.mapItem.id,
+      });
+      if (result.nodeRun) events.emit("node_run.queued", { projectId, nodeRun: result.nodeRun });
+    }
+    if (result?.kind === "knowledge_proposal") {
+      events.emit("knowledge.updated", { projectId, proposal: result.proposal, asset: result.asset });
+      publishKnowledgeProposalNotification(result.proposal, result.asset, actor);
+    }
+    if (result?.kind === "execution_review_approved") {
+      events.emit("review.completed", { projectId, reviewGate: result.reviewGate, nodeRun: result.nodeRun });
+      events.emit("delivery.created", { projectId, delivery: result.delivery });
+      events.emit("workstream.updated", { projectId, workstream: result.workstream });
+      emitNotification(notifications.publish("delivery.created", {
+        projectId,
+        entityType: "delivery",
+        entityId: result.delivery.id,
+        graphNodeId: `delivery:${result.delivery.id}`,
+        actor,
+        title: `${result.workstream.title} delivered`,
+        body: result.delivery.summary,
+        reason: "The independent execution Reviewer approved the submitted evidence.",
+        impact: result.knowledgeProposal
+          ? "A Knowledge Update Proposal now requires a decision."
+          : "The Workstream is delivered.",
+        context: { deliveryNodeId: `delivery:${result.delivery.id}` },
+        dedupeKey: `delivery-created:${result.delivery.id}`,
+      }));
+      if (result.knowledgeProposal && result.knowledgeAsset) {
+        publishKnowledgeProposalNotification(result.knowledgeProposal, result.knowledgeAsset, actor);
+      }
+    }
+    if (result?.kind === "execution_review_rejected") {
+      events.emit("review.completed", { projectId, reviewGate: result.reviewGate, nodeRun: result.nodeRun });
+      events.emit("node_run.queued", { projectId, nodeRun: result.reworkRun });
+      events.emit("workstream.updated", { projectId, workstream: result.workstream });
+      emitNotification(notifications.publish("review.rejected", {
+        projectId,
+        entityType: "node_run",
+        entityId: result.reworkRun.id,
+        graphNodeId: `node_run:${result.reworkRun.id}`,
+        actor,
+        title: `${result.workstream.title} requires rework`,
+        body: result.nodeRun.error || "Address the independent review feedback.",
+        reason: "The independent execution Reviewer rejected the Delivery.",
+        impact: "A Rework Node Run has been queued for the execution Agent.",
+        context: { nodeRunNodeId: `node_run:${result.reworkRun.id}` },
+        dedupeKey: `execution-rework:${result.reworkRun.id}`,
+      }));
+    }
+    if (result?.kind === "knowledge_decision") {
+      events.emit("knowledge.updated", {
+        projectId,
+        asset: result.asset,
+        proposal: result.proposal,
+        knowledgeVersion: result.knowledgeVersion,
+      });
+      if (result.knowledgeVersion) {
+        emitNotification(notifications.publish("knowledge.updated", {
+          projectId,
+          entityType: "knowledge_asset",
+          entityId: result.asset.id,
+          graphNodeId: `knowledge_asset:${result.asset.id}`,
+          actor,
+          title: `${result.asset.title} v${result.asset.currentVersion} published`,
+          body: result.knowledgeVersion.content,
+          reason: "The Knowledge Update Proposal was approved.",
+          impact: "Agent bindings on older versions are now stale and can be synchronized incrementally.",
+          context: { knowledgeNodeId: `knowledge_asset:${result.asset.id}` },
+          dedupeKey: `knowledge-version:${result.asset.id}:${result.asset.currentVersion}`,
+        }));
+      }
+    }
+    if (result?.kind === "task_review_decision") {
+      events.emit("task.moved", { projectId, task: result.task });
+      publishTaskStatusNotification(result.task, "in_review", actor);
+    }
+    if (result?.kind === "task_comment") {
+      events.emit("comment.created", { projectId, comment: result.comment, task: database.getTask(result.comment.taskId) });
+    }
+    if (result?.kind === "task_updated") {
+      events.emit("task.updated", { projectId, task: result.task });
+    }
+    events.emit("graph.command.completed", { projectId, command });
+  }
 
   async function readClientStorage() {
     try {
@@ -1401,9 +2343,33 @@ export function createTaskboardServer(options = {}) {
     database,
     fetch: options.jiraFetch ?? globalThis.fetch,
   });
+  let hostRuntime = null;
+  function currentHostThreadBinding(threadId) {
+    if (
+      !hostRuntime
+      || hostRuntime.threadId !== threadId
+      || !hostRuntime.codexProjectId
+      || !hostRuntime.codexProjectKind
+      || !hostRuntime.codexHostId
+      || !hostRuntime.workspacePath
+    ) return undefined;
+    return {
+      threadId,
+      codexProjectId: hostRuntime.codexProjectId,
+      codexProjectKind: hostRuntime.codexProjectKind,
+      codexHostId: hostRuntime.codexHostId,
+      workspacePath: hostRuntime.workspacePath,
+    };
+  }
+  function resolveInputThreadBinding(input) {
+    if (input.threadBinding !== undefined) return input;
+    const threadBinding = currentHostThreadBinding(input.threadId);
+    return threadBinding ? { ...input, threadBinding } : input;
+  }
   const cloudProxy = createCloudProxy({
     configStore: cloudConfig,
     fetch: options.remoteFetch ?? globalThis.fetch,
+    resolveThreadBinding: currentHostThreadBinding,
     resolveDevelopmentContext: async (projectId, context) => {
       if (!context.branch) return null;
       const config = await cloudConfig.read();
@@ -1434,14 +2400,14 @@ export function createTaskboardServer(options = {}) {
       throw new ApiError(
         upstream.ok ? 502 : upstream.status,
         "INVALID_CLOUD_RESPONSE",
-        "Cloud taskboard returned an invalid JSON response",
+        "Cloud knotline returned an invalid JSON response",
       );
     }
     if (!upstream.ok) {
       throw new ApiError(
         upstream.status,
         payload?.error?.code ?? "CLOUD_REQUEST_FAILED",
-        payload?.error?.message ?? "Cloud taskboard request failed",
+        payload?.error?.message ?? "Cloud knotline request failed",
         payload?.error?.details,
       );
     }
@@ -1519,7 +2485,7 @@ export function createTaskboardServer(options = {}) {
     database,
     codexExecutable: resolved.codexExecutable,
     codexStatePath: resolved.codexStatePath,
-    manageTaskboardSkillPath: resolved.skillPath,
+    manageKnotlineSkillPath: resolved.skillPath,
     processEnv: codexProcessEnvironment,
     resolveContext: resolveAiChatContext,
   });
@@ -1528,12 +2494,12 @@ export function createTaskboardServer(options = {}) {
     codexExecutable: resolved.codexExecutable,
     processEnv: codexProcessEnvironment,
     workspacePath: PROJECT_ROOT,
+    disabled: resolved.dshMode,
   });
   const aiEventResponses = new Set();
   const codexSessionSearches = new Map();
   const codexSessionStateCache = new Map();
   const codexSessionsDirectory = path.join(path.dirname(resolved.codexStatePath), "sessions");
-  let hostRuntime = null;
 
   async function findCodexSession(threadId) {
     const cached = codexSessionSearches.get(threadId);
@@ -1681,7 +2647,7 @@ export function createTaskboardServer(options = {}) {
           "access-control-allow-headers",
           request.headers["access-control-request-headers"] ?? "content-type",
         );
-        response.setHeader("access-control-expose-headers", "x-codex-taskboard-proof");
+        response.setHeader("access-control-expose-headers", "x-knotline-proof");
         response.setHeader("access-control-allow-private-network", "true");
         response.setHeader("vary", "origin");
         if (request.method === "OPTIONS") {
@@ -1691,12 +2657,12 @@ export function createTaskboardServer(options = {}) {
         }
       }
       if (resolved.instanceToken && origin === "app://-") {
-        const challenge = request.headers["x-codex-taskboard-challenge"];
+        const challenge = request.headers["x-knotline-challenge"];
         if (typeof challenge !== "string" || !/^[a-f0-9]{32,128}$/i.test(challenge)) {
           throw new ApiError(401, "INVALID_INSTANCE_CHALLENGE", "Launcher challenge is required");
         }
         response.setHeader(
-          "x-codex-taskboard-proof",
+          "x-knotline-proof",
           createHmac("sha256", resolved.instanceSecret).update(challenge).digest("hex"),
         );
       }
@@ -1711,6 +2677,7 @@ export function createTaskboardServer(options = {}) {
       const isMachineCapabilityRoute = pathname === "/api/meta"
         || pathname === "/api/device-workspaces"
         || pathname === "/api/workflow-capabilities"
+        || pathname === "/api/model-selection"
         || /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
       const capabilityCloudConfig = isMachineCapabilityRoute
         ? await cloudConfig.read()
@@ -1720,13 +2687,13 @@ export function createTaskboardServer(options = {}) {
       if (pathname === "/health") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         if (resolved.instanceToken) {
-          const challenge = request.headers["x-codex-taskboard-challenge"];
+          const challenge = request.headers["x-knotline-challenge"];
           if (typeof challenge !== "string" || !/^[a-f0-9]{32,128}$/i.test(challenge)) {
             throw new ApiError(401, "INVALID_INSTANCE_CHALLENGE", "Launcher challenge is required");
           }
           return sendJson(response, 200, {
             status: "ok",
-            product: "codex-taskboard",
+            product: "knotline",
             version: resolved.version,
             proof: createHmac("sha256", resolved.instanceSecret)
               .update(challenge)
@@ -1777,7 +2744,15 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "PUT") {
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["threadId", "threadRunning", "threadTodoProgress"]));
+          assertAllowedKeys(body, new Set([
+            "threadId",
+            "threadRunning",
+            "threadTodoProgress",
+            "codexProjectId",
+            "codexProjectKind",
+            "codexHostId",
+            "workspacePath",
+          ]));
           const threadId = stringField(body.threadId, "threadId", { required: true, maxLength: 256 });
           if (typeof body.threadRunning !== "boolean") {
             throw new ApiError(400, "INVALID_FIELD", "'threadRunning' must be a boolean");
@@ -1796,6 +2771,21 @@ export function createTaskboardServer(options = {}) {
             threadId,
             threadRunning: body.threadRunning,
             threadTodoProgress,
+            codexProjectId: stringField(body.codexProjectId ?? null, "codexProjectId", {
+              nullable: true,
+              maxLength: 256,
+            }),
+            codexProjectKind: body.codexProjectKind === "local" || body.codexProjectKind === "remote"
+              ? body.codexProjectKind
+              : null,
+            codexHostId: stringField(body.codexHostId ?? null, "codexHostId", {
+              nullable: true,
+              maxLength: 256,
+            }),
+            workspacePath: stringField(body.workspacePath ?? null, "workspacePath", {
+              nullable: true,
+              maxLength: 4096,
+            }),
             updatedAt: Date.now(),
           };
           return sendJson(response, 200, { runtime: hostRuntime });
@@ -1931,8 +2921,10 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/meta does not accept query parameters");
         }
         return sendJson(response, 200, {
-          manageTaskboardSkillPath: resolved.skillPath,
-          capabilities: { localAiChat: isLoopbackAddress(request.socket.remoteAddress) },
+          manageKnotlineSkillPath: resolved.skillPath,
+          capabilities: {
+            localAiChat: !resolved.dshMode && isLoopbackAddress(request.socket.remoteAddress),
+          },
           ...(capabilityCloudConfig?.remoteUrl
             ? {
               mode: "cloud",
@@ -2052,7 +3044,9 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/device-workspaces does not accept query parameters");
         }
         return sendJson(response, 200, {
-          workspaces: await readCodexProjectWorkspaces(resolved.codexStatePath),
+          workspaces: options.deviceWorkspaces
+            ? await options.deviceWorkspaces()
+            : await readCodexProjectWorkspaces(resolved.codexStatePath),
         });
       }
 
@@ -2073,15 +3067,39 @@ export function createTaskboardServer(options = {}) {
         if (workspacePath && !path.isAbsolute(workspacePath)) {
           throw new ApiError(400, "INVALID_FIELD", "'workspacePath' must be absolute");
         }
-        return sendJson(
-          response,
-          200,
-          await discoverWorkflowCapabilities(
+        return sendJson(response, 200, options.workflowCapabilities
+          ? await options.workflowCapabilities(workspacePath ?? PROJECT_ROOT)
+          : await discoverWorkflowCapabilities(
             resolved,
             workspacePath ?? PROJECT_ROOT,
             codexProcessEnvironment,
-          ),
-        );
+          ));
+      }
+
+      if (pathname === "/api/model-selection") {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Model selection does not accept query parameters");
+        }
+        if (!options.modelSelection) {
+          throw new ApiError(503, "MODEL_SELECTION_UNAVAILABLE", "DeepSeek model selection is unavailable");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, await options.modelSelection.get());
+        }
+        if (request.method === "PUT") {
+          try {
+            const selected = await options.modelSelection.select(parseModelSelection(await readJson(request)));
+            return sendJson(response, 200, { selected });
+          } catch (error) {
+            if (error instanceof ApiError) throw error;
+            throw new ApiError(
+              409,
+              "MODEL_UNAVAILABLE",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
       let currentCloudConfig = null;
@@ -2157,7 +3175,7 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(
             409,
             "JIRA_LABEL_CATALOG_DELETE_UNAVAILABLE",
-            "Jira 标签目录由同步管理，不能在 Taskboard 中删除",
+            "Jira 标签目录由同步管理，不能在 Knotline 中删除",
           );
         }
         const label = parseProjectLabel(await readJson(request));
@@ -2193,6 +3211,614 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { workflow });
         }
         return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      const projectMapRoute = pathname.match(/^\/api\/projects\/([^/]+)\/map$/);
+      if (projectMapRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        assertAllowedQuery(url.searchParams, new Set(["canvasId"]), "Project map routes");
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectMapRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const canvasIdValue = url.searchParams.get("canvasId");
+        const canvasId = canvasIdValue === null
+          ? null
+          : stringField(canvasIdValue, "canvasId", { required: true, maxLength: 256 });
+        const map = await graph.getProjectMap(projectId, canvasId);
+        if (!map) throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+        return sendJson(response, 200, { map });
+      }
+
+      const projectCanvasesRoute = pathname.match(/^\/api\/projects\/([^/]+)\/canvases$/);
+      if (projectCanvasesRoute) {
+        assertNoQuery(url.searchParams, "Project canvas routes");
+        const projectId = validateProjectId(decodeRouteSegment(projectCanvasesRoute[1], "Project id"));
+        if (request.method === "GET") {
+          return sendJson(response, 200, { canvases: database.listProjectCanvases(projectId) });
+        }
+        if (request.method === "POST") {
+          const canvas = database.createProjectCanvas(projectId);
+          events.emit("canvas.created", { projectId, canvas });
+          return sendJson(response, 201, { canvas });
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const projectCanvasNodesRoute = pathname.match(/^\/api\/projects\/([^/]+)\/canvases\/([^/]+)\/nodes$/);
+      if (projectCanvasNodesRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "Canvas node routes");
+        const projectId = validateProjectId(decodeRouteSegment(projectCanvasNodesRoute[1], "Project id"));
+        const canvasId = decodeRouteSegment(projectCanvasNodesRoute[2], "Canvas id");
+        const input = parseCanvasNodeAssignment(await readJson(request));
+        const membership = await graph.assignNodeToCanvas(projectId, canvasId, input.nodeId);
+        events.emit("canvas.node.assigned", { projectId, canvasId, nodeId: input.nodeId });
+        return sendJson(response, 201, { membership });
+      }
+
+      const projectCanvasClearRoute = pathname.match(/^\/api\/projects\/([^/]+)\/canvases\/([^/]+)\/clear$/);
+      if (projectCanvasClearRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        assertNoQuery(url.searchParams, "Canvas clear routes");
+        const projectId = validateProjectId(decodeRouteSegment(projectCanvasClearRoute[1], "Project id"));
+        const canvasId = decodeRouteSegment(projectCanvasClearRoute[2], "Canvas id");
+        const result = database.clearProjectCanvas(projectId, canvasId);
+        events.emit("canvas.cleared", { projectId, canvasId, clearedNodeCount: result.clearedNodeCount });
+        return sendJson(response, 200, result);
+      }
+
+      const projectAgentsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/agents$/);
+      if (projectAgentsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectAgentsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const agent = governance.createAgent(projectId, parseAgentProfileCreate(await readJson(request)));
+        const binding = await options.agentOrchestrator?.provisionAgent?.(agent.id);
+        events.emit("graph.node.updated", { projectId, entityType: "agent_profile", entityId: agent.id });
+        events.emit("agent.runtime.updated", { projectId, binding });
+        return sendJson(response, 201, { agent: database.getAgentProfile(agent.id), binding: binding ?? null });
+      }
+
+      const projectKnowledgeInitializeRoute = pathname.match(/^\/api\/projects\/([^/]+)\/knowledge\/initialize$/);
+      if (projectKnowledgeInitializeRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectKnowledgeInitializeRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const input = parseKnowledgeInitialize(await readJson(request));
+        const result = knowledge.initializeWithLeader(projectId, input.leaderAgentId);
+        events.emit("task.created", { projectId, task: result.task });
+        events.emit("node_run.queued", { projectId, nodeRun: result.nodeRun });
+        Promise.resolve(options.agentOrchestrator?.startNodeRun?.(result.nodeRun.id)).catch((error) => {
+          console.error(error);
+        });
+        return sendJson(response, 201, result);
+      }
+
+      const contextDuplicateRoute = pathname.match(/^\/api\/knowledge-assets\/([^/]+)\/duplicate$/);
+      if (contextDuplicateRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        const assetId = decodeRouteSegment(contextDuplicateRoute[1], "Knowledge asset id");
+        const result = knowledge.duplicateContext(assetId, actorFromRequest(request));
+        events.emit("knowledge.updated", {
+          projectId: result.asset.projectId,
+          asset: result.asset,
+          knowledgeVersion: result.knowledgeVersion,
+        });
+        return sendJson(response, 201, result);
+      }
+
+      const projectDemandsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/demands$/);
+      if (projectDemandsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectDemandsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const demand = governance.createDemand(
+          projectId,
+          parseDemandCreate(await readJson(request)),
+          actorFromRequest(request),
+        );
+        events.emit("graph.node.updated", { projectId, entityType: "demand", entityId: demand.id });
+        return sendJson(response, 201, { demand });
+      }
+
+      const projectBacklogsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/backlogs$/);
+      if (projectBacklogsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectBacklogsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const backlog = governance.createBacklogPool(
+          projectId,
+          parseBacklogCreate(await readJson(request)),
+          actorFromRequest(request),
+        );
+        events.emit("graph.node.updated", { projectId, entityType: "backlog_pool", entityId: backlog.id });
+        return sendJson(response, 201, { backlog });
+      }
+
+      const projectApprovalPoolsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/approval-pools$/);
+      if (projectApprovalPoolsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectApprovalPoolsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const approvalPool = governance.createApprovalPool(
+          projectId,
+          parseBacklogCreate(await readJson(request)),
+          actorFromRequest(request),
+        );
+        events.emit("graph.node.updated", { projectId, entityType: "approval_pool", entityId: approvalPool.id });
+        return sendJson(response, 201, { approvalPool });
+      }
+
+      const projectSkillsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/skills$/);
+      if (projectSkillsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectSkillsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const project = database.getProject(projectId);
+        if (!project) throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+        const input = parseSkillNodeCreate(await readJson(request));
+        const capabilities = options.workflowCapabilities
+          ? await options.workflowCapabilities(project.workspacePath ?? PROJECT_ROOT)
+          : await discoverWorkflowCapabilities(
+            resolved,
+            project.workspacePath ?? PROJECT_ROOT,
+            codexProcessEnvironment,
+          );
+        const installedSkill = capabilities.skills.find((skill) => skill.id === input.skillId);
+        if (!installedSkill) {
+          throw new ApiError(409, "SKILL_NOT_INSTALLED", `Skill '${input.skillId}' is not installed in this workspace`);
+        }
+        const actor = actorFromRequest(request);
+        const skillNode = database.createSkillNode({
+          id: randomUUID(),
+          projectId,
+          skillId: installedSkill.id,
+          label: installedSkill.label,
+          description: installedSkill.description,
+          scope: installedSkill.scope,
+          createdBy: `${actor.type}:${actor.id}`,
+        });
+        events.emit("graph.node.updated", { projectId, entityType: "skill", entityId: skillNode.id });
+        return sendJson(response, 201, { skillNode });
+      }
+
+      const projectMapItemsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/map-items$/);
+      if (projectMapItemsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectMapItemsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const actor = actorFromRequest(request);
+        const input = parseMapItemCreate(await readJson(request));
+        const mapItem = database.createMapItem({
+          id: randomUUID(),
+          projectId,
+          ...input,
+          createdBy: `${actor.type}:${actor.id}`,
+        });
+        events.emit("graph.node.updated", { projectId, entityType: mapItem.kind, entityId: mapItem.id });
+        return sendJson(response, 201, { mapItem });
+      }
+
+      const projectScheduledTriggersRoute = pathname.match(/^\/api\/projects\/([^/]+)\/scheduled-triggers$/);
+      if (projectScheduledTriggersRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectScheduledTriggersRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (!database.getProject(projectId)) {
+          throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+        }
+        const actor = actorFromRequest(request);
+        const trigger = database.createScheduledTrigger({
+          id: randomUUID(),
+          projectId,
+          ...parseScheduledTriggerCreate(await readJson(request)),
+          createdBy: `${actor.type}:${actor.id}`,
+        });
+        events.emit("graph.node.updated", { projectId, entityType: "scheduled_trigger", entityId: trigger.id });
+        return sendJson(response, 201, { trigger });
+      }
+
+      const scheduledTriggerRoute = pathname.match(/^\/api\/scheduled-triggers\/([^/]+)$/);
+      if (scheduledTriggerRoute) {
+        if (request.method !== "PATCH") return methodNotAllowed(response, ["PATCH"]);
+        let triggerId;
+        try {
+          triggerId = decodeURIComponent(scheduledTriggerRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Scheduled Trigger id contains invalid encoding");
+        }
+        const current = database.getScheduledTrigger(triggerId);
+        if (!current) {
+          throw new ApiError(404, "SCHEDULED_TRIGGER_NOT_FOUND", `Scheduled Trigger '${triggerId}' does not exist`);
+        }
+        const input = parseScheduledTriggerUpdate(await readJson(request));
+        const trigger = database.updateScheduledTriggerEnabled(triggerId, input.enabled);
+        events.emit("graph.node.updated", { projectId: trigger.projectId, entityType: "scheduled_trigger", entityId: trigger.id });
+        return sendJson(response, 200, { trigger });
+      }
+
+      const graphResolveRoute = pathname.match(/^\/api\/projects\/([^/]+)\/graph\/actions\/resolve$/);
+      if (graphResolveRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(graphResolveRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const input = parseGraphResolve(await readJson(request));
+        const resolution = await graph.resolveAction(projectId, input.sourceNodeId, input.targetNodeId);
+        return sendJson(response, 200, { resolution });
+      }
+
+      const projectGraphCommandsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/graph\/commands$/);
+      if (projectGraphCommandsRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectGraphCommandsRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        const actor = actorFromRequest(request);
+        const command = await graph.executeCommand(
+          projectId,
+          parseGraphCommand(await readJson(request)),
+          actor,
+        );
+        emitGraphCommandEvents(projectId, command, actor);
+        if (["agent_assignment", "demand_assignment", "context_assignment", "artifact_review_assignment", "knowledge_binding", "approval_assignment"].includes(command.result?.kind)) {
+          Promise.resolve(options.agentOrchestrator?.startNodeRun?.(command.result.nodeRun.id)).catch((error) => {
+            console.error(error);
+          });
+        }
+        if (command.result?.kind === "agent_team_created") {
+          const binding = await options.agentOrchestrator?.provisionAgent?.(command.result.team.id);
+          events.emit("agent.runtime.updated", { projectId, binding });
+        }
+        if (command.result?.kind === "execution_review_rejected") {
+          Promise.resolve(options.agentOrchestrator?.startNodeRun?.(command.result.reworkRun.id)).catch((error) => {
+            console.error(error);
+          });
+        }
+        return sendJson(response, 201, { command });
+      }
+
+      const graphCommandRoute = pathname.match(/^\/api\/graph\/commands\/([^/]+)$/);
+      if (graphCommandRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        let commandId;
+        try {
+          commandId = decodeURIComponent(graphCommandRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Graph command id contains invalid encoding");
+        }
+        const command = graph.getCommand(commandId);
+        if (!command) throw new ApiError(404, "GRAPH_COMMAND_NOT_FOUND", `Graph command '${commandId}' does not exist`);
+        return sendJson(response, 200, { command });
+      }
+
+      const nodeRunRoute = pathname.match(/^\/api\/node-runs\/([^/]+)(?:\/(runtime|start|update|control|submit-delivery|request-review|knowledge-proposals|project-context))?$/);
+      if (nodeRunRoute) {
+        let nodeRunId;
+        try {
+          nodeRunId = decodeURIComponent(nodeRunRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Node Run id contains invalid encoding");
+        }
+        const action = nodeRunRoute[2] ?? null;
+        if (action === null && request.method === "GET") {
+          return sendJson(response, 200, { nodeRun: requireNodeRun(nodeRunId) });
+        }
+        if (action === "project-context" && request.method === "GET") {
+          return sendJson(response, 200, { context: await projectContextForNodeRun(nodeRunId) });
+        }
+        if (request.method !== "POST") return methodNotAllowed(response, ["GET", "POST"]);
+        const actor = actorFromRequest(request);
+        if (action === "knowledge-proposals") {
+          const result = knowledge.proposeFromNodeRun(
+            nodeRunId,
+            parseKnowledgeProposal(await readJson(request)),
+            actor,
+          );
+          if (result.kind === "knowledge_initialized") {
+            events.emit("knowledge.updated", {
+              projectId: result.asset.projectId,
+              asset: result.asset,
+              knowledgeVersion: result.knowledgeVersion,
+            });
+            emitNotification(notifications.publish("knowledge.updated", {
+              projectId: result.asset.projectId,
+              entityType: "knowledge_asset",
+              entityId: result.asset.id,
+              graphNodeId: `knowledge_asset:${result.asset.id}`,
+              actor,
+              title: `${result.asset.title} v1 published`,
+              body: result.knowledgeVersion.content,
+              reason: "The Project Leader completed Knowledge initialization.",
+              impact: "Agents can now bind this exact Project Knowledge version.",
+              context: { knowledgeNodeId: `knowledge_asset:${result.asset.id}` },
+              dedupeKey: `knowledge-version:${result.asset.id}:1`,
+            }));
+            return sendJson(response, 201, { proposalId: result.asset.id, status: "published", result });
+          }
+          events.emit("knowledge.updated", { projectId: result.asset.projectId, ...result });
+          publishKnowledgeProposalNotification(result.proposal, result.asset, actor);
+          return sendJson(response, 201, { proposalId: result.proposal.id, status: result.proposal.status, result });
+        }
+        if (action === "runtime") {
+          const input = parseNodeRunRuntime(await readJson(request));
+          const current = requireNodeRun(nodeRunId);
+          const nodeRun = orchestration.updateNodeRun(nodeRunId, {
+            sessionId: input.sessionId,
+            status: input.status === "blocked"
+              ? "waiting_input"
+              : input.status === "working" && current.status === "queued" ? "running" : current.status,
+            error: input.error,
+          });
+          const binding = orchestration.updateBinding(current.agentProfileId, {
+            sessionId: input.sessionId,
+            currentNodeRunId: current.id,
+            status: input.status,
+            lastError: input.error,
+          });
+          events.emit("agent.runtime.updated", { projectId: current.projectId, binding, nodeRun });
+          return sendJson(response, 200, { nodeRun, binding });
+        }
+        if (action === "start") {
+          await readJson(request);
+          const result = updateExecutionProgress(nodeRunId, { status: "running", comment: "" }, actor);
+          events.emit("node_run.updated", { projectId: result.nodeRun.projectId, ...result });
+          return sendJson(response, 200, result);
+        }
+        if (action === "update") {
+          const result = updateExecutionProgress(nodeRunId, parseNodeRunProgress(await readJson(request)), actor);
+          events.emit("node_run.updated", { projectId: result.nodeRun.projectId, ...result });
+          return sendJson(response, 200, result);
+        }
+        if (action === "control") {
+          const input = parseNodeRunControl(await readJson(request));
+          const result = await options.agentOrchestrator?.controlNodeRun?.(nodeRunId, input.action);
+          if (!result) throw new ApiError(503, "AGENT_RUNTIME_UNAVAILABLE", "DeepSeek Harness Agent runtime is unavailable");
+          events.emit("node_run.updated", { projectId: result.nodeRun.projectId, ...result });
+          events.emit("agent.runtime.updated", { projectId: result.nodeRun.projectId, binding: result.binding });
+          return sendJson(response, 200, result);
+        }
+        if (action === "submit-delivery" || action === "request-review") {
+          const result = submitExecutionForReview(nodeRunId, parseDelivery(await readJson(request)), actor);
+          if (result.kind === "context_attached") {
+            result.contextEdge = graph.storeContextResult(
+              result.nodeRun.projectId,
+              result.demand.id,
+              result.asset.id,
+              actor,
+            );
+            emitContextAttached(result.nodeRun.projectId, result);
+          }
+          if (result.approvalExecution?.artifact) {
+            emitNotification(notifications.publish("task.completed", {
+              projectId: result.nodeRun.projectId,
+              entityType: "node_run",
+              entityId: result.nodeRun.id,
+              graphNodeId: `node_run:${result.nodeRun.id}`,
+              actor,
+              title: `实施完成：${result.approvalExecution.artifact.title}`,
+              body: String(result.nodeRun.result?.summary ?? "实施任务已完成"),
+              reason: "执行 Agent 已完成从审批池提取的功能模块。",
+              impact: "阅读实施结果后，该通知节点可从画布关闭。",
+              context: {
+                showOnMap: true,
+                nodeRunNodeId: `node_run:${result.nodeRun.id}`,
+                approvalPoolId: result.approvalExecution.approvalPool?.id ?? null,
+                artifactId: result.approvalExecution.artifact.id,
+              },
+              dedupeKey: `approval-execution-completed:${result.nodeRun.id}`,
+            }));
+          }
+          events.emit(result.reviewGate ? "review.requested" : "node_run.updated", {
+            projectId: result.nodeRun.projectId,
+            ...result,
+          });
+          if (result.approvalDeposit) {
+            for (const edge of result.approvalDeposit.edges) {
+              events.emit("graph.edge.updated", { projectId: result.nodeRun.projectId, edge });
+            }
+            events.emit("graph.node.updated", {
+              projectId: result.nodeRun.projectId,
+              entityType: "approval_pool",
+              entityId: result.approvalDeposit.approvalPool.id,
+            });
+            if (result.approvalDeposit.assignment) {
+              emitGraphCommandEvents(result.nodeRun.projectId, { result: result.approvalDeposit.assignment }, actor);
+              Promise.resolve(options.agentOrchestrator?.startNodeRun?.(result.approvalDeposit.assignment.nodeRun.id)).catch((error) => {
+                console.error(error);
+              });
+            }
+          }
+          if (result.nextAssignment) {
+            emitGraphCommandEvents(result.nodeRun.projectId, { result: result.nextAssignment }, actor);
+            Promise.resolve(options.agentOrchestrator?.startNodeRun?.(result.nextAssignment.nodeRun.id)).catch((error) => {
+              console.error(error);
+            });
+          }
+          return sendJson(response, 200, result);
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
+      const agentRuntimeMessageRoute = pathname.match(/^\/api\/agents\/([^/]+)\/messages$/);
+      if (agentRuntimeMessageRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let agentProfileId;
+        try {
+          agentProfileId = decodeURIComponent(agentRuntimeMessageRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Agent id contains invalid encoding");
+        }
+        const input = parseAgentRuntimeMessage(await readJson(request));
+        if (!options.agentOrchestrator?.messageAgent) {
+          throw new ApiError(503, "AGENT_HOST_UNAVAILABLE", "DeepSeek Harness Agent orchestration is not available");
+        }
+        let nodeRun = null;
+        if (input.mode === "followup") {
+          nodeRun = orchestration.queueFollowup(agentProfileId, input.message);
+          events.emit("node_run.queued", { projectId: nodeRun.projectId, nodeRun });
+        }
+        await options.agentOrchestrator.messageAgent(agentProfileId, input.mode, input.message, nodeRun?.id ?? null);
+        return sendJson(response, 202, { accepted: true, nodeRun });
+      }
+
+      const agentProfileRoute = pathname.match(/^\/api\/agents\/([^/]+)$/);
+      if (agentProfileRoute) {
+        if (request.method !== "PATCH") return methodNotAllowed(response, ["PATCH"]);
+        let agentProfileId;
+        try {
+          agentProfileId = decodeURIComponent(agentProfileRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Agent id contains invalid encoding");
+        }
+        const agent = governance.renameAgent(
+          agentProfileId,
+          parseAgentProfileRename(await readJson(request)).name,
+        );
+        events.emit("graph.node.updated", {
+          projectId: agent.projectId,
+          entityType: "agent_profile",
+          entityId: agent.id,
+        });
+        return sendJson(response, 200, { agent });
+      }
+
+      const graphNodeLayoutRoute = pathname.match(/^\/api\/graph\/nodes\/([^/]+)\/layout$/);
+      if (graphNodeLayoutRoute) {
+        if (request.method !== "PATCH") return methodNotAllowed(response, ["PATCH"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Graph layout routes do not accept query parameters");
+        }
+        let nodeId;
+        try {
+          nodeId = decodeURIComponent(graphNodeLayoutRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Graph node id contains invalid encoding");
+        }
+        const input = parseGraphLayout(await readJson(request));
+        const node = await graph.saveNodeLayout(nodeId, input);
+        if (!node) throw new ApiError(404, "GRAPH_NODE_NOT_FOUND", `Graph node '${nodeId}' does not exist`);
+        events.emit("graph.node.updated", { projectId: node.projectId, node });
+        return sendJson(response, 200, { node });
+      }
+
+      if (pathname === "/api/notifications") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        const unknownQuery = [...url.searchParams.keys()].filter((key) => key !== "projectId");
+        if (unknownQuery.length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${unknownQuery[0]}`);
+        }
+        const projectIdValue = url.searchParams.get("projectId");
+        const projectId = projectIdValue === null ? null : validateProjectId(projectIdValue);
+        return sendJson(response, 200, { notifications: notifications.list(projectId) });
+      }
+
+      const notificationActionRoute = pathname.match(/^\/api\/notifications\/([^/]+)\/actions\/([^/]+)$/);
+      if (notificationActionRoute) {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        let notificationId;
+        let action;
+        try {
+          notificationId = decodeURIComponent(notificationActionRoute[1]);
+          action = decodeURIComponent(notificationActionRoute[2]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Notification action path contains invalid encoding");
+        }
+        const actor = actorFromRequest(request);
+        const actionInput = notifications.actionCommand(
+          notificationId,
+          action,
+          parseNotificationAction(await readJson(request)),
+        );
+        const command = await graph.executeCommand(actionInput.projectId, actionInput, actor);
+        emitGraphCommandEvents(actionInput.projectId, command, actor);
+        if (["agent_assignment", "demand_assignment", "artifact_review_assignment", "knowledge_binding", "approval_assignment"].includes(command.result?.kind)) {
+          Promise.resolve(options.agentOrchestrator?.startNodeRun?.(command.result.nodeRun.id)).catch((error) => {
+            console.error(error);
+          });
+        }
+        if (command.result?.kind === "execution_review_rejected") {
+          Promise.resolve(options.agentOrchestrator?.startNodeRun?.(command.result.reworkRun.id)).catch((error) => {
+            console.error(error);
+          });
+        }
+        const notification = notifications.updateRecipient(notificationId, actor, {
+          read: true,
+          handled: action !== "ask",
+        });
+        events.emit("notification.updated", { projectId: actionInput.projectId, notification });
+        return sendJson(response, 200, { command, notification });
+      }
+
+      const notificationRoute = pathname.match(/^\/api\/notifications\/([^/]+)$/);
+      if (notificationRoute) {
+        if (request.method !== "PATCH") return methodNotAllowed(response, ["PATCH"]);
+        let notificationId;
+        try {
+          notificationId = decodeURIComponent(notificationRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Notification id contains invalid encoding");
+        }
+        const notification = notifications.updateRecipient(
+          notificationId,
+          actorFromRequest(request),
+          parseNotificationUpdate(await readJson(request)),
+        );
+        if (!notification) throw new ApiError(404, "NOTIFICATION_NOT_FOUND", "Notification no longer exists");
+        events.emit("notification.updated", { projectId: notification.projectId, notification });
+        return sendJson(response, 200, { notification });
       }
 
       const developmentContextsRoute = pathname.match(/^\/api\/projects\/([^/]+)\/development-contexts$/);
@@ -2258,12 +3884,13 @@ export function createTaskboardServer(options = {}) {
         }
         if (request.method === "POST") {
           const actor = actorFromRequest(request);
-          const { assigneeTarget, ...input } = parseTaskCreate(await readJson(request));
+          const { assigneeTarget, ...parsedInput } = parseTaskCreate(await readJson(request));
+          const input = resolveInputThreadBinding(parsedInput);
           if (input.projectId === JIRA_PROJECT_ID) {
             throw new ApiError(
               409,
               "JIRA_CREATE_UNAVAILABLE",
-              "请在 Jira 中新建议题，Taskboard 当前只同步已分配给你的任务",
+              "请在 Jira 中新建议题，Knotline 当前只同步已分配给你的任务",
             );
           }
           const task = database.createTask({
@@ -2313,26 +3940,32 @@ export function createTaskboardServer(options = {}) {
         }
         const relationType = parseIssueRelationType(type);
         if (request.method === "POST") {
-          const { version, threadId } = parseArchive(await readJson(request));
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
           const result = database.addTaskRelation(
             taskId,
             version,
             relationType,
             relatedTaskId,
             threadId,
+            threadBinding,
             actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
         }
         if (request.method === "DELETE") {
-          const { version, threadId } = parseArchive(await readJson(request));
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
           const result = database.removeTaskRelation(
             taskId,
             version,
             relationType,
             relatedTaskId,
             threadId,
+            threadBinding,
             actorFromRequest(request),
           );
           events.emit("task.relation.updated", result);
@@ -2380,7 +4013,7 @@ export function createTaskboardServer(options = {}) {
         }
         if (request.method === "POST") {
           const comment = database.createComment(taskId, {
-            ...parseCommentCreate(await readJson(request)),
+            ...resolveInputThreadBinding(parseCommentCreate(await readJson(request))),
             actor: actorFromRequest(request),
           });
           const task = database.getTask(taskId);
@@ -2405,8 +4038,14 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Comment routes do not accept query parameters");
         }
         if (request.method === "PATCH") {
-          const patch = parseCommentPatch(await readJson(request));
-          const comment = database.updateComment(id, patch.version, patch.body, patch.threadId);
+          const patch = resolveInputThreadBinding(parseCommentPatch(await readJson(request)));
+          const comment = database.updateComment(
+            id,
+            patch.version,
+            patch.body,
+            patch.threadId,
+            patch.threadBinding,
+          );
           const task = database.getTask(comment.taskId);
           events.emit("comment.updated", { comment, task });
           return sendJson(response, 200, { comment });
@@ -2593,7 +4232,13 @@ export function createTaskboardServer(options = {}) {
         }
         if (!action && request.method === "PATCH") {
           const actor = actorFromRequest(request);
-          const { version, changes, threadId, assigneeTarget } = parseTaskPatch(await readJson(request));
+          const {
+            version,
+            changes,
+            threadId,
+            threadBinding,
+            assigneeTarget,
+          } = resolveInputThreadBinding(parseTaskPatch(await readJson(request)));
           const current = database.getTask(id);
           if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
           let jiraChanged = false;
@@ -2634,7 +4279,7 @@ export function createTaskboardServer(options = {}) {
           }
           let task;
           try {
-            task = database.updateTask(id, version, changes, threadId, actor);
+            task = database.updateTask(id, version, changes, threadId, threadBinding, actor);
           } catch (error) {
             if (jiraChanged) {
               try {
@@ -2643,19 +4288,20 @@ export function createTaskboardServer(options = {}) {
                 throw new ApiError(
                   502,
                   "JIRA_RECONCILE_FAILED",
-                  "Jira 已更新，但 Taskboard 重新同步失败，请手动同步",
+                  "Jira 已更新，但 Knotline 重新同步失败，请手动同步",
                 );
               }
             }
             throw error;
           }
           events.emit("task.updated", { task });
+          publishTaskStatusNotification(task, current.status, actor);
           return sendJson(response, 200, { task });
         }
         if (!action && request.method === "DELETE") {
           const current = database.getTask(id);
           if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_DELETE_UNAVAILABLE", "Jira 任务不能从 Taskboard 永久删除");
+            throw new ApiError(409, "JIRA_DELETE_UNAVAILABLE", "Jira 任务不能从 Knotline 永久删除");
           }
           const { version } = parseArchive(await readJson(request));
           const deleted = database.deleteArchivedTask(id, version);
@@ -2670,7 +4316,7 @@ export function createTaskboardServer(options = {}) {
           return sendEmpty(response, 204);
         }
         if (action === "move" && request.method === "POST") {
-          const move = parseMove(await readJson(request));
+          const move = resolveInputThreadBinding(parseMove(await readJson(request)));
           const current = database.getTask(id);
           if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
           if (current.source === "jira") {
@@ -2685,15 +4331,18 @@ export function createTaskboardServer(options = {}) {
             }
             await jira.moveTask(current, move.status);
           }
+          const actor = actorFromRequest(request);
           const task = database.moveTask(
             id,
             move.version,
             move.status,
             move.sortOrder,
             move.threadId,
-            actorFromRequest(request),
+            move.threadBinding,
+            actor,
           );
           events.emit("task.moved", { task });
+          publishTaskStatusNotification(task, current.status, actor);
           return sendJson(response, 200, { task });
         }
         if (action === "archive" && request.method === "POST") {
@@ -2701,8 +4350,16 @@ export function createTaskboardServer(options = {}) {
           if (current?.source === "jira") {
             throw new ApiError(409, "JIRA_ARCHIVE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动归档");
           }
-          const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.archiveTask(id, version, threadId, actorFromRequest(request));
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
+          const task = database.archiveTask(
+            id,
+            version,
+            threadId,
+            threadBinding,
+            actorFromRequest(request),
+          );
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
         }
@@ -2711,8 +4368,16 @@ export function createTaskboardServer(options = {}) {
           if (current?.source === "jira") {
             throw new ApiError(409, "JIRA_RESTORE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动恢复");
           }
-          const { version, threadId } = parseArchive(await readJson(request));
-          const task = database.restoreTask(id, version, threadId, actorFromRequest(request));
+          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+            parseArchive(await readJson(request)),
+          );
+          const task = database.restoreTask(
+            id,
+            version,
+            threadId,
+            threadBinding,
+            actorFromRequest(request),
+          );
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });
         }
@@ -2754,10 +4419,10 @@ export function createTaskboardServer(options = {}) {
     options: resolved,
     async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
       if (host !== "127.0.0.1" && host !== "0.0.0.0") {
-        throw new Error("Taskboard server must bind to 127.0.0.1 or 0.0.0.0");
+        throw new Error("Knotline server must bind to 127.0.0.1 or 0.0.0.0");
       }
       if (fd !== null && (!Number.isInteger(fd) || fd < 3 || fd > 255)) {
-        throw new Error("Taskboard server listen fd must be an inherited file descriptor");
+        throw new Error("Knotline server listen fd must be an inherited file descriptor");
       }
       await new Promise((resolve, reject) => {
         const onError = (error) => {
@@ -2777,6 +4442,7 @@ export function createTaskboardServer(options = {}) {
       return server.address();
     },
     async close() {
+      clearInterval(scheduledTriggerTimer);
       const serverClosed = listening
         ? new Promise((resolve, reject) => {
             server.close((error) => error ? reject(error) : resolve());
