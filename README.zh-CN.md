@@ -1,174 +1,41 @@
-[English](README.md) | [简体中文](README.zh-CN.md)
+# Knotline
 
-# Codex Taskboard
+Knotline 是挂在 DeepSeek Harness 侧边栏上的项目运行地图插件。
 
-一个本地优先的议题面板，可在浏览器中运行，也可通过独立 CDP 启动器或其注入脚本嵌入 Codex。同一套 HTTP API 为 React UI 和随附 Codex Skill 使用的 `taskctl` CLI 提供支持。
+产品只有一个界面：Map。需求、Agent、项目知识、执行、交付和审核都在同一张地图上完成，没有任务列表、看板、概览、时间线、Workflow 编辑器或独立运行监控模式。
 
-![Codex Taskboard 产品截图](docs/assets/codex-taskboard.png)
+## 唯一工作流
 
-## 系统要求
+1. 选择一个已经存在于 DeepSeek Harness 工作区里的项目；未选择时不能使用 Map。
+2. 只主动创建六种根节点：**诉求**、**Agent**、**Skill**、**积压池**、**审批池**和**定时触发**。每个 Agent 都绑定一个可恢复的 DSH 对话。
+3. 诉求从顶部抽屉拖到画布后打开模糊背景输入框；提交只创建独立节点，不会立即执行。
+4. 从诉求向 Agent 拉线后，系统自动分类：问题生成回答，复杂需求依次生成审核反馈与计划书，Debug 在当前工作区启动实时任务台。
+5. Agent 可以因能力匹配自动、可见地转交（衍生转交边）；两个 Agent 连线会衍生 Team，保留各自对话历史和工作方式。
+6. 把诉求与 Agent 连到积压池，系统会建立队列并分配工作。把审批池连到受信 Agent，可以让执行只在计划获批后串行进行。把定时触发连到 Agent 或 Team，会按 Host 持有的持久间隔发送其 Prompt。
+7. 完成后继续经过预审查档案、独立审核，最终产生 Delivery。
 
-- Node.js 22.5 或更高版本
-- 构建 macOS App 和 DMG：Xcode Command Line Tools、Rust 1.88 或更高版本，以及 `aarch64-apple-darwin` 和 `x86_64-apple-darwin` target。`npm install` 会安装本项目使用的 Tauri CLI。
-- 构建 Windows NSIS：Microsoft Store 版 Codex App、Rust 1.88 或更高版本，以及带 C++ 工作负载和 Windows SDK 的 Visual Studio Build Tools。
+Task、NodeRun、Session、Workstream、Knowledge、Review 和 Notification 仍是底层实现原语，不作为用户可创建的节点类型出现。
 
-## 本地运行
-
-```bash
-npm install
-npm run build
-npm start
-```
-
-打开 <http://127.0.0.1:47823>。SQLite 数据库存储在 `.data/taskboard.sqlite`。
-
-如需在前端实时重载模式下开发：
-
-```bash
-npm run dev
-```
-
-Vite UI 运行在 <http://127.0.0.1:5173>，并将 API 请求代理到本地服务。
-
-## 使用 CLI
-
-在项目中运行：
-
-```bash
-npm run taskctl -- project create \
-  --id my-project \
-  --name "My project" \
-  --workspace-path /absolute/path/to/repository
-
-npm run taskctl -- issue create \
-  --project my-project \
-  --title "Implement the next slice" \
-  --status todo \
-  --priority high \
-  --labels product,mvp
-```
-
-请运行 `npm link`，以便在 shell 路径中使用 `taskctl`。设置 `CODEX_TASKBOARD_URL`，可让 CLI 指向另一个本地或局域网服务。云端部署通过**回环 companion**（本机 loopback 配套服务，不是「伴侣」）使用 `taskctl cloud login` 配置。
-
-## 安装 Codex Skill
-
-将 `skills/manage-taskboard` 复制或符号链接到 Codex Skill 目录，然后启动一个新的 Codex 任务：
-
-```bash
-ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
-```
-
-该 Skill 会指导 Codex 检查议题，将其移到 `in_progress`，使用乐观版本控制，验证工作，然后将其移到 `in_review`；只有在用户明确确认接受或要求将议题标记为完成后，才会将议题移到 `done`。
-
-## 嵌入 Codex
-
-### 手动：使用专用 CDP 端口
-
-让现有 Codex 窗口保持打开。在 Taskboard 仓库中，使用专用 CDP 端口启动第二个 Codex 实例：
-
-```bash
-open -n -a /Applications/ChatGPT.app --args \
-  --remote-debugging-port=9231 \
-  --remote-allow-origins=http://127.0.0.1:9231
-```
-
-新 Codex 窗口出现后，在另一个终端中运行注入器：
-
-```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 \
-npm run codex:inject -- --port 9231 --open
-```
-
-使用嵌入式面板时，让注入器终端保持运行。原 Codex 窗口不会变化，新窗口会显示 Taskboard 侧边栏入口。如果端口 `9231` 已被占用，请在两个命令中使用另一个端口。
-
-### 推荐：用一个命令启动独立 Taskboard 窗口
-
-让现有 Codex 窗口保持打开，然后运行：
-
-```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
-```
-
-该命令会在需要时启动本地 Taskboard 服务，使用独立配置文件和仅限回环访问的端口 `9231` 启动官方 macOS Codex App，等待主渲染器和侧边栏，在 Plugins 后注入一个原生外观的 Taskboard 入口，并持续监视服务和替换后的渲染器。现有 Codex 窗口不会变化。使用嵌入式面板时，请让该命令保持运行。启动器不会修改 `ChatGPT.app` 或其 `app.asar`。
-
-源码启动器会把带身份信息的服务地址写入 `.data/launcher-runtime.json`。通过 `npm link` 安装的 `taskctl` 默认读取此文件。因此，普通 shell 和从面板打开的 Codex 任务无需设置额外环境变量，即可使用同一个 Taskboard 服务。
-
-### macOS App：无需终端即可打开和注入
-
-如需进行 Tauri 开发，请运行：
-
-```bash
-npm run app:dev
-```
-
-如需构建本地 App 和 DMG，请先安装两个 Rust target，然后运行构建：
-
-```bash
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-npm run app:build
-```
-
-从 Finder 打开 `src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app`。DMG 位于 `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`。如果只需安装稳定版，请从 [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest) 下载当前 DMG。
-
-该 App 包含自己的 Node 运行时、Taskboard 服务、构建后的 Web UI、Skill、CLI 包装器和注入脚本。它会启动服务，启动官方 Codex App，等待渲染器，注入侧边栏入口，并在不显示终端窗口的情况下打开面板。该 App 可以复制到本检出目录之外；目标 Mac 只需安装官方 Codex App，不需要此仓库、系统 Node 安装或单独的 Codex CLI 安装。Taskboard 数据存储在 `~/Library/Application Support/Codex Taskboard`，启动器输出写入 `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`。
-
-本地构建使用 ad-hoc 代码签名进行直接验证。公开的 macOS 下载仍需要 Developer ID 签名和 Apple 公证。
-
-### Windows App：托盘启动器与内置 Taskboard
-
-先从 Microsoft Store 安装官方 Codex App。在 Windows x64 上运行以下命令构建当前用户级 NSIS 安装包：
+## 运行
 
 ```powershell
-npm ci
-npm run app:build:windows
+npm install
+npm run build
+npx @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add (Resolve-Path .).Path
+npx @deepseek-ai/dsh@0.1.0-rc.6 web
 ```
 
-安装包位于 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。它包含托盘启动器、内置 Node、本地服务、构建后的 Web UI、Skill、`taskctl.cmd` 和注入脚本。Taskboard 数据存储在 `%APPDATA%\Codex Taskboard`，日志存储在 `%LOCALAPPDATA%\Codex Taskboard\Logs`，Skill 会复制到 `%USERPROFILE%\.agents\skills\manage-taskboard`。
+打开 DSH 输出的地址，从侧栏选择 **地图**。Map 由 DSH 插件层直接渲染，不存在独立页面。
 
-Windows CI 产物目前有意保持未签名，也不支持自动更新。分发前请阅读[代码签名策略](docs/code-signing-policy.md)。保留数据的行为见 [Windows 卸载说明](docs/windows-uninstall.md)。
+## 开发验证
 
-Codex 26.715.52143 的渲染器 CSP 会阻止任意 HTTP iframe。因此，启动器会启用 CDP CSP 绕过，重新加载该渲染器一次，安装文档启动脚本，并等待 Taskboard OOPIF 实际加载。同一台机器上的其他进程访问 CDP 时不需要身份验证，因此启动器运行时只能运行受信任的本地代码。
-
-要注入一个已经通过其他方式使用 CDP 启动的 Codex 实例，请运行：
-
-```bash
-npm run codex:inject -- --port 9229 --open
-```
-
-该命令也会保持驻留，因此服务退出后，注入的标签页可以重新启动 Taskboard。使用 `Ctrl-C` 停止该命令。
-
-该脚本会在 Codex 侧边栏添加 Taskboard 入口，并在 Codex 的整个主工作区渲染 iframe，包括上下文标题栏区域，因此 Taskboard 自己的页眉不会留下空白条。这个完整的矩形页眉位于 Electron 可拖动层之上，并标记为 `no-drag`；由于 Taskboard 活动时会隐藏原生上下文操作，它自己的操作可以使用正常的边缘内边距，不会产生人为的右侧空隙。原生侧边栏保持挂载，此前页面的选中状态和上下文页眉会暂时隐藏；选择另一个 Codex 页面会恢复它们。
-
-“在对话中打开”会在可用时选择对应的原生 Codex 项目，并打开一个未发送的原生 composer，其中包含 `e-taskboard` 指令和议题的真实标识符。已安装的 Skill 会根据该指令隐式选中，因此 composer 不会添加 `$manage-taskboard` 提及。只有在会话实际处理该议题后，才会记录该会话的归属关系：`taskctl` 读取 Codex 的 `CODEX_THREAD_ID`，并在议题或评论变更上记录该 ID。记录的 ID 可通过 Codex 的原生路由桥接点击。每个议题可以绑定一个 Git 分支或一个 worktree；选项从所选 Codex 项目的仓库扫描，而不是手动输入。该集成使用 Codex 现有的项目、composer 和路由标记；它不会修改 React、替换 `fetch`、加载私有 chunk 或编辑 Codex 数据文件。
-
-要使用不同的 UI 来源，请在用户脚本运行前设置 `window.__CODEX_TASKBOARD_URL__`。
-
-## 配置
-
-| 变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `CODEX_TASKBOARD_HOST` | `0.0.0.0` | HTTP 绑定地址；使用 `127.0.0.1` 可禁用局域网访问 |
-| `CODEX_TASKBOARD_PORT` | `47823` | 本地 HTTP 端口 |
-| `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite 数据目录 |
-| `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API 源地址 |
-
-`npm start` 会输出本地 URL 和可用的局域网 URL。同一受信任网络中的协作者可以打开其中一个局域网 URL，并使用同一个 Taskboard 服务。任务、评论和附件变化通过服务器发送事件广播到所有打开的客户端；客户端重连后会执行完整刷新，因此不会遗漏断开连接期间发生的变化。使用 `taskctl` 的协作者可以通过 `CODEX_TASKBOARD_URL=http://<host-ip>:47823` 指向共享服务。
-
-局域网模式没有账户身份验证：受信任本地网络中任何能访问该 URL 的人都可以读取和写入 Taskboard。公网和云端部署需要经过身份验证的部署边界。
-
-## 通过 Cloudflare 共享
-
-对于两名受信任的协作者，Taskboard 可以在 Cloudflare 上运行，使用 Worker Static Assets 和 API 路由，以 D1 作为权威业务数据库，并使用私有 R2 bucket 存储附件。该部署使用带共享密码的 HTTPS Basic 身份验证，并在全局修订号变化后刷新已打开的面板。
-
-每台设备保留自己的项目检出映射，并继续使用**本地 companion**（本机配套服务 / 环回代理）提供 Codex、Git/worktree、Skill 和 MCP 能力。请勿将 companion 译为「伴侣」，也不要把普通 Taskboard HTTP 接口称为「伴侣 API」。云端模式绝不会回退到本地 SQLite 数据库，也不会同时写入本地数据库。
-
-请参阅[云端协作](docs/cloud-collaboration.md)，了解所有者部署、现有 GitHub 安装设置、密码轮换、本地路径映射和一次性本地数据迁移流程。
-
-## 验证
-
-```bash
+```powershell
 npm run check
+npm run pack:check
 ```
 
-该命令会运行 TypeScript 检查、生产前端构建，以及服务器/CLI/注入测试套件。
+产品范围与验收标准见 [docs/PRD.md](docs/PRD.md)，架构见 [docs/architecture.md](docs/architecture.md)，本地开发见 [docs/development.md](docs/development.md)。English version: [README.md](README.md).
+
+## 许可与来源
+
+Knotline 以 [Apache License 2.0](LICENSE) 发布。代码承继自 Dashi Taskboard 项目：[PROVENANCE.md](PROVENANCE.md) 记录了保留的部分，[NOTICE](NOTICE) 包含必需的署名。捆绑的第三方代码列于 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。Knotline 是独立的社区项目，与 DeepSeek 及上游 Dashi Taskboard 作者均无隶属、赞助或背书关系；产品名称仅用于描述互操作性。

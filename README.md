@@ -1,178 +1,41 @@
-[English](README.md) | [简体中文](README.zh-CN.md)
+# Knotline
 
-# Codex Taskboard
+Knotline is a project operating map plugin for the DeepSeek Harness sidebar.
 
-A local-first issue board that runs in a browser and can be embedded in Codex through the standalone CDP launcher or its injection script. The same HTTP API powers the React UI and the `taskctl` CLI used by the bundled Codex Skill.
+The product has one surface: Map. Demands, agents, project knowledge, execution, delivery, and review all live on the same canvas. There is no task list, board, dashboard, timeline, workflow editor, or separate operations console.
 
-![Codex Taskboard product screenshot](docs/assets/codex-taskboard.png)
+## The workflow
 
-## Requirements
+1. Select a project that already exists in the DeepSeek Harness workspace.
+2. Create only six root node types: **Request**, **Agent**, **Skill**, **Backlog**, **Approval Pool**, and **Scheduled Trigger**. Every Agent owns a resumable DSH conversation.
+3. Drag Request from the top drawer onto the canvas to open the blurred composer. Submitting creates an island node and does not execute it.
+4. Connect Request to Agent. Automatic classification derives an Answer for questions, Review Feedback then Plan for complex work, or a live Task Bench for Debug in the selected workspace.
+5. Capability routing creates a visible delegation edge when another Agent is a better match. Connecting two Agents derives a Team while retaining both member conversations and working methods.
+6. Connect Requests and Agents to a Backlog to queue and assign work. Connect an Approval Pool to a trusted Agent to gate execution behind approved plans. Connect a Scheduled Trigger to an Agent or Team to send its Prompt on a persistent Host-owned interval.
+7. Completion continues through a Pre-review Artifact, independent review, and Delivery.
 
-- Node.js 22.5 or newer
-- macOS App and DMG builds: Xcode Command Line Tools and Rust 1.88 or newer with the `aarch64-apple-darwin` and `x86_64-apple-darwin` targets. `npm install` installs the Tauri CLI used by this project.
-- Windows NSIS builds: the Microsoft Store Codex App, Rust 1.88 or newer, and Visual Studio Build Tools with the C++ workload and Windows SDK.
+Task, NodeRun, Session, Workstream, Knowledge, Review, and Notification records remain implementation primitives. They do not appear as user-created node types.
 
-## Run locally
-
-```bash
-npm install
-npm run build
-npm start
-```
-
-Open <http://127.0.0.1:47823>. The SQLite database is stored at `.data/taskboard.sqlite`.
-
-For development with live frontend reload:
-
-```bash
-npm run dev
-```
-
-The Vite UI runs at <http://127.0.0.1:5173> and proxies API requests to the local service.
-
-## Use the CLI
-
-Run it from the project:
-
-```bash
-npm run taskctl -- project create \
-  --id my-project \
-  --name "My project" \
-  --workspace-path /absolute/path/to/repository
-
-npm run taskctl -- issue create \
-  --project my-project \
-  --title "Implement the next slice" \
-  --status todo \
-  --priority high \
-  --labels product,mvp
-```
-
-Use `npm link` if you want `taskctl` on your shell path. Set `CODEX_TASKBOARD_URL` to point the CLI at another local or LAN service. Cloud deployments are configured through the **loopback companion** (device-local loopback service for auth and path mapping—not a chat persona) with `taskctl cloud login`.
-
-## Install the Codex Skill
-
-Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then start a new Codex task:
-
-```bash
-ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
-```
-
-The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
-
-## Embed in Codex
-
-### Manual: use a dedicated CDP port
-
-Keep the existing Codex window open. From the Taskboard repository, start a second Codex instance with a dedicated CDP port:
-
-```bash
-open -n -a /Applications/ChatGPT.app --args \
-  --remote-debugging-port=9231 \
-  --remote-allow-origins=http://127.0.0.1:9231
-```
-
-After the new Codex window appears, run the injector in another terminal:
-
-```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 \
-npm run codex:inject -- --port 9231 --open
-```
-
-Keep the injector terminal running while using the embedded panel. The original Codex window remains unchanged, and the new window receives the Taskboard sidebar entry. If port `9231` is occupied, use another port in both commands.
-
-### Recommended: launch an independent Taskboard window with one command
-
-Keep existing Codex windows open and run:
-
-```bash
-CODEX_TASKBOARD_HOST=127.0.0.1 npm run codex
-```
-
-This starts the local Taskboard service when needed, launches the official macOS Codex app with an independent profile and loopback-only port `9231`, waits for the main renderer and sidebar, injects a native-looking Taskboard entry after Plugins, and keeps watching both the service and replacement renderers. Existing Codex windows remain unchanged. Keep this command running while using the embedded panel. The launcher does not modify `ChatGPT.app` or its `app.asar`.
-
-The source launcher writes its authenticated endpoint to `.data/launcher-runtime.json`. A `taskctl` command installed with `npm link` reads this file by default, so a normal shell and a Codex task opened from the panel use the same Taskboard service without an extra environment variable.
-
-### macOS App: open and inject without a terminal
-
-For Tauri development, run:
-
-```bash
-npm run app:dev
-```
-
-To build the local App and DMG, install the two Rust targets once, then run the build:
-
-```bash
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-npm run app:build
-```
-
-Open `src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app` from Finder. The DMG is in `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`. If you only want the stable App, download the current DMG from [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest).
-
-The App contains its own Node runtime, Taskboard service, built web UI, Skill, CLI wrapper, and injection script. It starts the service, launches the official Codex app, waits for the renderer, injects the sidebar entry, and opens the panel without showing a terminal window. The App can be copied away from this checkout; the target Mac only needs the official Codex app and does not need this repository, a system Node installation, or a separate Codex CLI installation. Taskboard data is stored in `~/Library/Application Support/Codex Taskboard`, and launcher output is written to `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`.
-
-### Windows code signing
-
-For official Windows releases after the application is approved: **Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).** Current Windows CI artifacts remain unsigned until that approval. See the [Code signing policy](docs/code-signing-policy.md), [Privacy policy](PRIVACY.md), and [Windows uninstall instructions](docs/windows-uninstall.md).
-
-The local build uses ad-hoc code signing for direct verification. A public macOS download still needs Developer ID signing and Apple notarization.
-
-### Windows App: tray launcher and bundled Taskboard
-
-Install the official Codex App from the Microsoft Store. To build the current-user NSIS installer on Windows x64, run:
+## Run
 
 ```powershell
-npm ci
-npm run app:build:windows
+npm install
+npm run build
+npx @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add (Resolve-Path .).Path
+npx @deepseek-ai/dsh@0.1.0-rc.6 web
 ```
 
-The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`. It installs a tray launcher, bundled Node runtime, local service, built web UI, Skill, `taskctl.cmd`, and injection script. Taskboard data is stored in `%APPDATA%\Codex Taskboard`; logs are stored in `%LOCALAPPDATA%\Codex Taskboard\Logs`; the Skill is copied to `%USERPROFILE%\.agents\skills\manage-taskboard`.
-
-Windows CI artifacts are intentionally unsigned and do not auto-update. Review [the code-signing policy](docs/code-signing-policy.md) before distributing a build. See [Windows uninstall](docs/windows-uninstall.md) for retained-data behavior.
-
-Codex 26.715.52143 ships a renderer CSP that blocks arbitrary HTTP iframes. The launcher therefore enables CDP CSP bypass, reloads that renderer once, installs the document-start script, and waits until the Taskboard OOPIF is actually loaded. CDP is unauthenticated to other processes on the same machine, so only run trusted local code while the launcher is active.
-
-To inject into a Codex instance that was already launched with CDP by another method, run:
-
-```bash
-npm run codex:inject -- --port 9229 --open
-```
-
-This command also stays resident so the injected tab can restart Taskboard after a service exit. Stop it with `Ctrl-C`.
-
-The script adds a Taskboard entry to the Codex sidebar and renders the iframe across Codex's complete main workspace, including the contextual titlebar area so Taskboard's own header does not leave an empty strip. That full rectangular header is placed above Electron's draggable layer and marked `no-drag`; because the native contextual actions are suppressed while Taskboard is active, its own actions use their normal edge padding without an artificial right-side gap. The native sidebar stays mounted, while the previous page selection and contextual header are temporarily suppressed; choosing another Codex page restores them.
-
-“在对话中打开” selects the corresponding native Codex project when one is available and opens an unsent native composer with an `e-taskboard` instruction and the issue's actual identifier. The installed Skill is selected implicitly from that instruction, so the composer does not add a `$manage-taskboard` mention. A conversation is attributed only after it actually processes the issue: `taskctl` reads Codex's `CODEX_THREAD_ID` and records that ID on the issue or comment mutation. Recorded IDs are clickable through Codex's native route bridge. Each issue can bind either one Git branch or one worktree; the options are scanned from the selected Codex project's repository instead of being typed by hand. The integration uses Codex's existing project, composer, and route markers; it does not patch React, replace `fetch`, load private chunks, or edit Codex data files.
-
-To use a different UI origin, set `window.__CODEX_TASKBOARD_URL__` before the user script runs.
-
-## Configuration
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CODEX_TASKBOARD_HOST` | `0.0.0.0` | HTTP bind address; use `127.0.0.1` to disable LAN access |
-| `CODEX_TASKBOARD_PORT` | `47823` | Local HTTP port |
-| `CODEX_TASKBOARD_DATA_DIR` | `.data` | SQLite data directory |
-| `CODEX_TASKBOARD_URL` | `http://127.0.0.1:47823` | CLI API origin |
-
-`npm start` prints both the local URL and the available LAN URLs. Teammates on the same trusted network can open one of those LAN URLs and use the same taskboard service. Task, comment, and attachment changes are broadcast to every open client through server-sent events; reconnecting clients perform a full refresh so changes made while disconnected are not missed. A teammate using `taskctl` can point it at the shared service with `CODEX_TASKBOARD_URL=http://<host-ip>:47823`.
-
-LAN mode has no account authentication: anyone on the trusted local network who can reach the URL can read and write the taskboard. Public internet and cloud deployment require an authenticated deployment boundary.
-
-## Share through Cloudflare
-
-For two trusted collaborators, the taskboard can run on Cloudflare with Worker Static Assets and API routes, D1 as the authoritative business database, and a private R2 bucket for attachments. The deployment uses HTTPS Basic Authentication with a shared password and refreshes open boards after a global revision changes.
-
-Each device keeps its own project checkout mapping and continues to use a local companion for Codex, Git/worktree, Skill, and MCP capabilities. Cloud mode never falls back to or double-writes the local SQLite database.
-
-See [Cloud collaboration](docs/cloud-collaboration.md) for owner deployment, existing GitHub installation setup, password rotation, local path mapping, and the one-time local-data migration flow.
+Open the URL printed by DSH and select **Map** in the sidebar. The Map renders inside the DSH plugin layer. Knotline has no standalone page.
 
 ## Verify
 
-```bash
+```powershell
 npm run check
+npm run pack:check
 ```
 
-This runs TypeScript checking, a production frontend build, and the server/CLI/injection test suite.
+See the Chinese [product requirements document](docs/PRD.md), [docs/architecture.md](docs/architecture.md) for the runtime path, and [docs/development.md](docs/development.md) for local development. 中文说明见 [README.zh-CN.md](README.zh-CN.md)。
+
+## License and provenance
+
+Knotline is licensed under the [Apache License 2.0](LICENSE). It descends from the Dashi Taskboard codebase; [PROVENANCE.md](PROVENANCE.md) records what was carried forward and [NOTICE](NOTICE) carries the required attribution. Bundled third-party code is listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Knotline is an independent community project and is not affiliated with, sponsored by, or endorsed by DeepSeek or the upstream Dashi Taskboard authors. Product names are used only to describe interoperability.
