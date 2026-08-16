@@ -3598,7 +3598,7 @@ export function createKnotlineServer(options = {}) {
           const current = requireNodeRun(nodeRunId);
           const nodeRun = orchestration.updateNodeRun(nodeRunId, {
             sessionId: input.sessionId,
-            status: input.status === "blocked"
+            status: input.status === "blocked" || input.status === "waiting"
               ? "waiting_input"
               : input.status === "working" && current.status === "queued" ? "running" : current.status,
             error: input.error,

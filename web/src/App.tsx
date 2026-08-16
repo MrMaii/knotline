@@ -109,6 +109,16 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
 
   useEffect(() => {
     const source = new EventSource(resolveKnotlineUrl("/api/events"));
+    // Bursts of SSE events coalesce into one map refetch so concurrent agents
+    // cannot trigger a refresh storm.
+    let mapRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleMapRefresh = () => {
+      if (mapRefreshTimer !== null) return;
+      mapRefreshTimer = setTimeout(() => {
+        mapRefreshTimer = null;
+        setMapRevision((value) => value + 1);
+      }, 250);
+    };
     const handleEvent = (event: Event) => {
       const message = event as MessageEvent<string>;
       let projectId: string | undefined;
@@ -118,12 +128,13 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
       } catch {}
       if (event.type === "project.created") void refreshProjects();
       if (event.type.startsWith("notification.")) setNotificationRevision((value) => value + 1);
-      if (!projectId || projectId === selectedProjectId) setMapRevision((value) => value + 1);
+      if (!projectId || projectId === selectedProjectId) scheduleMapRefresh();
     };
     MAP_EVENT_NAMES.forEach((name) => source.addEventListener(name, handleEvent));
     source.onopen = () => setConnection("live");
     source.onerror = () => setConnection("reconnecting");
     return () => {
+      if (mapRefreshTimer !== null) clearTimeout(mapRefreshTimer);
       MAP_EVENT_NAMES.forEach((name) => source.removeEventListener(name, handleEvent));
       source.close();
     };

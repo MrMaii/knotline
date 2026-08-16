@@ -374,3 +374,16 @@ export async function actOnNotification(
     { method: "POST", body: JSON.stringify(input) },
   );
 }
+
+export interface NodeRunTranscriptLine {
+  role: "user" | "assistant" | "tool";
+  text: string;
+}
+
+export async function getNodeRunTranscript(nodeRunId: string): Promise<NodeRunTranscriptLine[]> {
+  const url = new URL(`/knotline/api/node-runs/${encodeURIComponent(nodeRunId)}/transcript`, window.location.origin);
+  const response = await fetch(url.href);
+  if (!response.ok) return [];
+  const data = await response.json() as { lines?: NodeRunTranscriptLine[] };
+  return data.lines ?? [];
+}

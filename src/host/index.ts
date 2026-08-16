@@ -771,13 +771,16 @@ class AgentOrchestrator {
       }
       this.transientRetries.delete(nodeRunId)
       if (current && ['queued', 'running'].includes(current.status)) {
+        // A clean turn that answered without lifecycle tools is an answer awaiting the
+        // user's next instruction, not a blocked run — report it honestly.
+        const answeredCleanly = outcome === 'completed' && finalMessage !== null
         await knotlineJson(this.ctx, `/node-runs/${encodeURIComponent(nodeRunId)}/runtime`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
           body: JSON.stringify({
             sessionId: String(agent.id),
-            status: 'blocked',
-            error: 'The DSH Agent became idle without calling a Knotline completion tool.',
+            status: answeredCleanly ? 'waiting' : 'blocked',
+            error: answeredCleanly ? null : 'The DSH Agent became idle without calling a Knotline completion tool.',
             ...(finalMessage ? { finalMessage } : {}),
           }),
         })
@@ -1000,10 +1003,51 @@ async function saveGlobalModelSelection(ctx: Context, input: ModelSelection): Pr
   return selected
 }
 
+interface TranscriptLine { role: 'user' | 'assistant' | 'tool'; text: string }
+
+const TRANSCRIPT_MAX_LINES = 200
+const TRANSCRIPT_MAX_LINE_CHARS = 4_000
+
+// A compact live view of the agent conversation behind a node run, so the Map
+// shows the same narrative a chat window would.
+function serializeTranscript(events: readonly unknown[]): TranscriptLine[] {
+  const lines: TranscriptLine[] = []
+  for (const event of events) {
+    if (!event || typeof event !== 'object') continue
+    const record = event as { type?: unknown; data?: unknown }
+    const type = typeof record.type === 'string' ? record.type : ''
+    const data = record.data && typeof record.data === 'object' ? record.data as Record<string, unknown> : null
+    if (type === 'user/message' || type === 'assistant/message') {
+      const payload = type === 'user/message' ? data?.content : (data?.message as { content?: unknown } | undefined)?.content
+      const parts = Array.isArray(payload) ? payload : []
+      const texts: string[] = []
+      for (const part of parts) {
+        if (!part || typeof part !== 'object') continue
+        const piece = part as { type?: unknown; text?: unknown }
+        if (piece.type === 'text' && typeof piece.text === 'string' && piece.text.trim()) texts.push(piece.text)
+      }
+      const joined = texts.join('\n\n').trim()
+      if (joined) {
+        lines.push({
+          role: type === 'user/message' ? 'user' : 'assistant',
+          text: joined.length > TRANSCRIPT_MAX_LINE_CHARS ? `${joined.slice(0, TRANSCRIPT_MAX_LINE_CHARS)}…` : joined,
+        })
+      }
+      continue
+    }
+    if (type.startsWith('tool/')) {
+      const name = typeof data?.name === 'string' ? data.name : typeof data?.tool === 'string' ? data.tool : null
+      if (name && type.endsWith('/start')) lines.push({ role: 'tool', text: name })
+    }
+  }
+  return lines.slice(-TRANSCRIPT_MAX_LINES)
+}
+
 async function handleRequest(
   knotline: KnotlineServerHandle,
   req: IncomingMessage,
   res: ServerResponse,
+  readTranscript?: (nodeRunId: string) => TranscriptLine[] | null,
 ): Promise<void> {
   const url = new URL(req.url ?? KNOTLINE_BASE_PATH, 'http://knotline.local')
   const pathname = url.pathname
@@ -1013,6 +1057,17 @@ async function handleRequest(
     return
   }
   if (!methodAllowed(req, res)) return
+
+  const transcriptRoute = pathname.match(new RegExp(`^${KNOTLINE_API_PATH}/node-runs/([^/]+)/transcript$`))
+  if (transcriptRoute?.[1] !== undefined && readTranscript) {
+    const lines = readTranscript(decodeURIComponent(transcriptRoute[1]))
+    if (lines === null) {
+      sendError(res, 404, 'TRANSCRIPT_UNAVAILABLE', 'This node run has no live conversation to read.')
+      return
+    }
+    sendJson(res, 200, { lines }, req.method === 'HEAD')
+    return
+  }
 
   if (pathname === `${KNOTLINE_API_PATH}/health`) {
     sendJson(res, 200, {
@@ -1077,7 +1132,13 @@ export function apply(ctx: Context): void {
     path: KNOTLINE_BASE_PATH,
     handler: async (req, res) => {
       try {
-        await handleRequest(knotline, req, res)
+        await handleRequest(knotline, req, res, (nodeRunId) => {
+          const run = knotline.database.getNodeRun(nodeRunId) as { sessionId?: string | null } | null
+          if (!run?.sessionId) return null
+          const agent = ctx.agents.list().find(candidate => String(candidate.id) === String(run.sessionId))
+          if (!agent) return null
+          return serializeTranscript(agent.session.events)
+        })
       } catch (error) {
         ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
         if (!res.headersSent) sendError(res, 500, 'INTERNAL_ERROR', 'Knotline could not read the current DSH state.')

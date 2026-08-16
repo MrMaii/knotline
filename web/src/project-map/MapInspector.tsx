@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getNodeRunTranscript, type NodeRunTranscriptLine } from "../api";
 import { useKnotlineI18n } from "../i18n";
+import { renderMarkdown } from "./markdown";
 import type { ProjectMapNode } from "../types";
 
 interface MapInspectorProps {
@@ -23,12 +25,14 @@ function DetailList({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-function TextSection({ label, value }: { label: string; value: unknown }) {
+function TextSection({ label, value, markdown }: { label: string; value: unknown; markdown?: boolean }) {
   if (typeof value !== "string" || !value.trim()) return null;
   return (
     <section>
       <strong>{label}</strong>
-      <p className="project-map-document-content">{value}</p>
+      {markdown
+        ? <div className="project-map-document-content is-markdown">{renderMarkdown(value)}</div>
+        : <p className="project-map-document-content">{value}</p>}
     </section>
   );
 }
@@ -70,6 +74,27 @@ export function MapInspector({
     node.entityType === "node_run" ? details.result : node.entityType === "notification" ? details.runResult : null,
   );
 
+  const liveRun = node.entityType === "node_run"
+    && ["queued", "running", "waiting_input", "changes_requested"].includes(node.data.status);
+  const [transcript, setTranscript] = useState<NodeRunTranscriptLine[]>([]);
+  useEffect(() => {
+    if (!liveRun) {
+      setTranscript([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      const lines = await getNodeRunTranscript(node.entityId);
+      if (!cancelled) setTranscript(lines);
+    };
+    void load();
+    const timer = setInterval(() => void load(), 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [liveRun, node.entityId]);
+
   async function sendAgentMessage(mode: "followup" | "steer" | "inject") {
     if (!agentMessage.trim()) return;
     setSendingAgentMessage(true);
@@ -100,9 +125,7 @@ export function MapInspector({
         {typeof details.intervalMinutes === "number" && <div><dt>{text("触发频次", "Frequency")}</dt><dd>{details.intervalMinutes} min</dd></div>}
         {typeof details.nextTriggerAt === "string" && <div><dt>{text("下次触发", "Next trigger")}</dt><dd>{new Date(details.nextTriggerAt).toLocaleString()}</dd></div>}
       </dl>
-      {typeof details.content === "string" && details.content && (
-        <section><strong>{text("内容", "Content")}</strong><p className="project-map-document-content">{details.content}</p></section>
-      )}
+      <TextSection label={text("内容", "Content")} value={details.content} markdown />
       {node.entityType === "notification" && typeof details.reason === "string" && (
         <section><strong>{text("为什么通知你", "Why you were notified")}</strong><p className="project-map-document-content">{details.reason}</p></section>
       )}
@@ -117,7 +140,7 @@ export function MapInspector({
         label={text("验证证据", "Validation evidence")}
         value={runResult?.evidence ?? notificationContext?.evidence ?? (node.entityType === "delivery" ? details.evidence : undefined)}
       />
-      <TextSection label={text("Agent 完整回复", "Agent full reply")} value={runResult?.finalMessage} />
+      <TextSection label={text("Agent 完整回复", "Agent full reply")} value={runResult?.finalMessage} markdown />
       {node.entityType === "scheduled_trigger" && (
         <TextSection label={text("最近一次完整回复", "Latest full reply")} value={details.lastRunFinalMessage} />
       )}
@@ -174,6 +197,21 @@ export function MapInspector({
               </li>
             ))}</ul>
           ) : <p>{text("暂无公用上下文", "No public context yet")}</p>}
+        </section>
+      )}
+      {liveRun && transcript.length > 0 && (
+        <section className="project-map-transcript">
+          <strong>{text("实时转录", "Live transcript")}</strong>
+          <div className="project-map-transcript-lines">
+            {transcript.map((line, index) => (
+              <article className={`is-${line.role}`} key={`${index}-${line.role}`}>
+                <b>{line.role === "user" ? text("你", "You") : line.role === "tool" ? text("工具", "Tool") : "Agent"}</b>
+                {line.role === "assistant"
+                  ? <div className="is-markdown">{renderMarkdown(line.text)}</div>
+                  : <p>{line.text}</p>}
+              </article>
+            ))}
+          </div>
         </section>
       )}
       {(["agent_profile", "node_run"].includes(node.entityType)) && (runtimeBinding || node.entityType === "node_run") && (
