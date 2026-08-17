@@ -27,6 +27,28 @@ function initials(value: string) {
   return (words.length > 1 ? words.slice(0, 2).map((word) => word[0]).join("") : value.slice(0, 2)).toUpperCase();
 }
 
+function TypewriterLine({ line, animate }: { line: string; animate: boolean }) {
+  const [shown, setShown] = useState(animate ? 0 : line.length);
+  useEffect(() => {
+    if (!animate) {
+      setShown(line.length);
+      return;
+    }
+    setShown(0);
+    const timer = setInterval(() => {
+      setShown((current) => {
+        if (current >= line.length) {
+          clearInterval(timer);
+          return current;
+        }
+        return current + 2;
+      });
+    }, 28);
+    return () => clearInterval(timer);
+  }, [line, animate]);
+  return <p>{line.slice(0, shown)}</p>;
+}
+
 function commentsKey(nodeId: string) {
   return `knotline.comments.${nodeId}`;
 }
@@ -81,6 +103,9 @@ export function NodeDetailOverlay({ node, nodes, onClose, onSendComment }: NodeD
   const [comments, setComments] = useState<StoredComment[]>(() => readComments(node.id));
   const [draft, setDraft] = useState("");
   const [posting, setPosting] = useState(false);
+  const [lastPostedId, setLastPostedId] = useState<string | null>(null);
+  const [annotateAnchor, setAnnotateAnchor] = useState<{ x: number; y: number } | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => setComments(readComments(node.id)), [node.id]);
 
@@ -123,6 +148,23 @@ export function NodeDetailOverlay({ node, nodes, onClose, onSendComment }: NodeD
     if (!contentRef.current.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
     const quoted = selected.split(/\r?\n/).map((line) => `> ${line}`).join("\n");
     setDraft((current) => (current ? `${current}\n\n${quoted}\n\n` : `${quoted}\n\n`));
+    setAnnotateAnchor(null);
+    setTimeout(() => {
+      draftRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      draftRef.current?.focus();
+    }, 60);
+  }
+
+  function handleContentMouseUp() {
+    const selection = window.getSelection();
+    const selected = selection?.toString().trim() ?? "";
+    if (!selected || !selection || selection.rangeCount === 0
+      || !contentRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      setAnnotateAnchor(null);
+      return;
+    }
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    setAnnotateAnchor({ x: rect.left + rect.width / 2, y: rect.top });
   }
 
   async function postComment() {
@@ -138,10 +180,15 @@ export function NodeDetailOverlay({ node, nodes, onClose, onSendComment }: NodeD
         );
         relayed = true;
       }
-      const next = [...comments, { id: `${Date.now()}`, text: message, at: new Date().toISOString(), relayed }];
+      const id = `${Date.now()}`;
+      const next = [...comments, { id, text: message, at: new Date().toISOString(), relayed }];
       setComments(next);
       writeComments(node.id, next);
       setDraft("");
+      setLastPostedId(id);
+      setTimeout(() => {
+        document.getElementById(`knotline-comment-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 80);
     } finally {
       setPosting(false);
     }
@@ -169,7 +216,7 @@ export function NodeDetailOverlay({ node, nodes, onClose, onSendComment }: NodeD
             </div>
           </header>
           <h1 className="project-map-detail-title">{node.data.title}</h1>
-          <div className="project-map-detail-content" ref={contentRef}>
+          <div className="project-map-detail-content" ref={contentRef} onMouseUp={handleContentMouseUp}>
             {isRequest ? (
               <>
                 <blockquote>{node.data.subtitle || node.data.title}</blockquote>
@@ -212,17 +259,32 @@ export function NodeDetailOverlay({ node, nodes, onClose, onSendComment }: NodeD
               </p>
             )}
             {comments.map((comment) => (
-              <article key={comment.id} className="project-map-detail-comment">
+              <article key={comment.id} id={`knotline-comment-${comment.id}`} className="project-map-detail-comment">
                 <b>{text("你", "You")}</b>
                 <div className="is-markdown">{renderMarkdown(comment.text)}</div>
-                <small>
-                  {new Date(comment.at).toLocaleString()}
-                  {comment.relayed ? ` · ${text("已回传给 Agent", "relayed to the Agent")}` : ""}
-                </small>
+                <small>{new Date(comment.at).toLocaleString()}</small>
+                {comment.relayed && agentNode && (
+                  <div className="project-map-detail-reply">
+                    <b>{agentNode.data.title}</b>
+                    <TypewriterLine
+                      animate={comment.id === lastPostedId}
+                      line={queueCount > 0
+                        ? text(
+                          `${agentNode.data.title} 目前繁忙中，在处理你的评论之前，它还有 ${queueCount} 件事要干。我会在结束之后通知你。`,
+                          `${agentNode.data.title} is busy: ${queueCount} items are ahead of your comment. You will be notified when it finishes.`,
+                        )
+                        : text(
+                          `${agentNode.data.title} 已经读取到你的反馈，正在工作中，请稍等。我会在结束之后通知你。`,
+                          `${agentNode.data.title} has read your feedback and is working on it. You will be notified when it finishes.`,
+                        )}
+                    />
+                  </div>
+                )}
               </article>
             ))}
             <footer>
               <textarea
+                ref={draftRef}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 rows={3}
@@ -276,6 +338,17 @@ export function NodeDetailOverlay({ node, nodes, onClose, onSendComment }: NodeD
           </aside>
         )}
       </div>
+      {annotateAnchor && (
+        <button
+          type="button"
+          className="project-map-annotate-float"
+          style={{ left: annotateAnchor.x, top: annotateAnchor.y }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={quoteSelection}
+        >
+          {text("批注", "Annotate")}
+        </button>
+      )}
     </div>
   );
 }

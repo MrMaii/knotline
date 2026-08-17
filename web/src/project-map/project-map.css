@@ -2690,7 +2690,7 @@
 
 .project-map-detail-main {
   overflow-y: auto;
-  max-width: 760px;
+  max-width: 1180px;
   width: 100%;
   margin: 0 auto;
   padding: 28px 36px 60px;
@@ -2997,4 +2997,82 @@
   .project-map-detail-rail {
     display: none;
   }
+}
+
+.markdown-table-scroll {
+  overflow-x: auto;
+  margin: 0 0 14px;
+  border: 1px solid var(--border-subtle, #eaecf0);
+  border-radius: 12px;
+}
+
+.markdown-table-scroll table {
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown-table-scroll th,
+.markdown-table-scroll td {
+  padding: 9px 13px;
+  border-bottom: 1px solid #f2f4f7;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-table-scroll th {
+  background: #f9fafb;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.markdown-table-scroll tr:last-child td {
+  border-bottom: 0;
+}
+
+.project-map-annotate-float {
+  position: fixed;
+  z-index: 140;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #182230;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgb(16 24 40 / 28%);
+  transform: translate(-50%, calc(-100% - 10px));
+  animation: project-map-menu-enter 140ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+
+.project-map-annotate-float:hover {
+  background: #344054;
+}
+
+.project-map-detail-reply {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  margin-left: 18px;
+  padding: 10px 14px;
+  border-left: 3px solid #6172f3;
+  border-radius: 0 10px 10px 0;
+  background: rgb(97 114 243 / 5%);
+}
+
+.project-map-detail-reply > b {
+  color: #3538cd;
+  font-size: 12px;
+}
+
+.project-map-detail-reply p {
+  margin: 0;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.55;
 }

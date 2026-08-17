@@ -39,6 +39,32 @@ export function renderMarkdown(source: string): ReactNode[] {
     blocks.push(list.ordered ? <ol key={`l-${key++}`}>{items}</ol> : <ul key={`l-${key++}`}>{items}</ul>);
     list = null;
   };
+  let table: string[][] | null = null;
+  const splitRow = (row: string) => row.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+  const flushTable = () => {
+    if (!table || table.length === 0) {
+      table = null;
+      return;
+    }
+    const [head, ...body] = table;
+    blocks.push(
+      <div className="markdown-table-scroll" key={`t-${key++}`}>
+        <table>
+          {head && (
+            <thead><tr>{head.map((cell, index) => <th key={`th-${index}`}>{inline(cell, `th-${key}-${index}`)}</th>)}</tr></thead>
+          )}
+          <tbody>
+            {body.map((row, rowIndex) => (
+              <tr key={`tr-${rowIndex}`}>
+                {row.map((cell, cellIndex) => <td key={`td-${rowIndex}-${cellIndex}`}>{inline(cell, `td-${key}-${rowIndex}-${cellIndex}`)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    );
+    table = null;
+  };
 
   for (const line of lines) {
     if (code !== null) {
@@ -51,6 +77,16 @@ export function renderMarkdown(source: string): ReactNode[] {
       continue;
     }
     const trimmed = line.trim();
+    if (trimmed.startsWith("|") && trimmed.includes("|", 1)) {
+      flushParagraph();
+      flushList();
+      const cells = splitRow(trimmed);
+      if (cells.every((cell) => /^:?-{2,}:?$/.test(cell))) continue;
+      table = table ?? [];
+      table.push(cells);
+      continue;
+    }
+    if (table) flushTable();
     if (trimmed.startsWith("```")) {
       flushParagraph();
       flushList();
@@ -87,6 +123,7 @@ export function renderMarkdown(source: string): ReactNode[] {
     paragraph.push(trimmed);
   }
   if (code !== null) blocks.push(<pre key={`c-${key++}`}><code>{code.join("\n")}</code></pre>);
+  flushTable();
   flushParagraph();
   flushList();
   return blocks;
