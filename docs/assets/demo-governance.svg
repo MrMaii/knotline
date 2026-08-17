@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 330" role="img" aria-label="Independent review to delivery" font-family="'PingFang SC','Microsoft YaHei',Segoe UI,sans-serif">
+  <rect width="560" height="330" rx="18" fill="#fff" stroke="#e4e7ec"/>
+  <text x="28" y="40" fill="#182230" font-size="14" font-weight="750">治理内建 · Governed by design</text>
+
+  <g transform="translate(28,80)">
+    <rect width="150" height="86" rx="12" fill="#f8faff" stroke="#84adff"/>
+    <text x="16" y="28" fill="#175cd3" font-size="10" font-weight="750" letter-spacing="1">预审查档案</text>
+    <rect x="16" y="40" width="116" height="6" rx="3" fill="#e4e7ec"/>
+    <rect x="16" y="52" width="94" height="6" rx="3" fill="#e4e7ec"/>
+    <text x="16" y="74" fill="#98a2b3" font-size="9.5">Pre-review Artifact</text>
+  </g>
+
+  <path d="M 178 123 H 218" stroke="#6172f3" stroke-width="3" stroke-linecap="round" stroke-dasharray="8 7">
+    <animate attributeName="stroke-dashoffset" from="0" to="-60" dur="1.8s" repeatCount="indefinite"/>
+  </path>
+
+  <g transform="translate(218,80)">
+    <rect width="150" height="86" rx="26" fill="#fff" stroke="#9e77ed"/>
+    <circle cx="34" cy="43" r="16" fill="#7f56d9"/>
+    <text x="34" y="48" fill="#fff" font-size="10" font-weight="800" text-anchor="middle">R</text>
+    <text x="58" y="38" fill="#6941c6" font-size="10" font-weight="750">独立审核</text>
+    <text x="58" y="56" fill="#98a2b3" font-size="9.5">不能自批</text>
+    <circle cx="34" cy="43" r="22" fill="none" stroke="#9e77ed" stroke-width="1.6" opacity="0.5">
+      <animate attributeName="r" values="18;28;18" dur="2.2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.5;0;0.5" dur="2.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <path d="M 368 123 H 408" stroke="#12b76a" stroke-width="3" stroke-linecap="round"/>
+
+  <g transform="translate(408,80)">
+    <rect width="124" height="86" rx="12" fill="#f0fdf4" stroke="#6ce9a6"/>
+    <text x="16" y="30" fill="#067647" font-size="10" font-weight="750" letter-spacing="1">DELIVERY</text>
+    <text x="16" y="60" fill="#067647" font-size="22" font-weight="800">✓
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.2s" repeatCount="indefinite"/>
+    </text>
+  </g>
+
+  <g transform="translate(28,200)">
+    <rect width="504" height="96" rx="12" fill="#fcfcfd" stroke="#eaecf0"/>
+    <text x="18" y="30" fill="#475467" font-size="12" font-weight="700">后端强制的三条规则</text>
+    <text x="18" y="54" fill="#667085" font-size="11.5">① 执行完成必产生预审查档案　② 审核人必须独立，自批直接被拒</text>
+    <text x="18" y="76" fill="#667085" font-size="11.5">③ 状态只能由结构化生命周期工具推进，禁止用生成文本谎报完成</text>
+  </g>
+</svg>
