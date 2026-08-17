@@ -66,6 +66,7 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState("");
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [error, setError] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -182,21 +183,27 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
               <img className="map-app-mark-light" src={knotlineMarkLight} alt="" />
               <img className="map-app-mark-dark" src={knotlineMarkDark} alt="" />
             </span>
-            <div><strong>Knotline</strong><small>{text("项目地图", "Project Map")}</small></div>
+            <div><strong>{text("结绳", "Knotline")}</strong><small>{text("Knotline", "结绳")}</small></div>
           </div>
-          <div className="map-app-project">
-            <select
-              aria-label={text("当前项目", "Current project")}
-              value={selectedWorkspaceId}
-              disabled={loadingProjects || workspacesLoading || workspaces.length === 0 || bindingWorkspace}
-              onChange={(event) => void selectWorkspace(event.target.value)}
-            >
-              <option value="" disabled>{text("选择 DeepSeek 工作区项目", "Select a DeepSeek workspace project")}</option>
-              {workspaces.map((workspace) => (
-                <option value={workspace.id} key={workspace.id}>{workspace.title}</option>
-              ))}
-            </select>
-          </div>
+          {selectedProject && (
+            <div className="map-app-project">
+              <span className="map-app-project-name">
+                {workspaces.find((workspace) => workspace.id === selectedWorkspaceId)?.title ?? selectedProject.name}
+              </span>
+              <button
+                type="button"
+                className="map-app-project-switch"
+                disabled={bindingWorkspace}
+                onClick={() => {
+                  setPendingWorkspaceId(selectedWorkspaceId);
+                  setSelectedWorkspaceId("");
+                  setSelectedProjectId("");
+                }}
+              >
+                {text("切换工作区", "Switch workspace")}
+              </button>
+            </div>
+          )}
           <div className="map-app-actions">
             <GlobalModelPicker />
             <span className={`map-app-connection is-${connection}`} title={connection} />
@@ -236,9 +243,42 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
               focusRequest={focus?.requestId}
             />
           ) : (
-            <div className="map-app-empty">
-              <strong>{text("先选择一个项目", "Select a project first")}</strong>
-              <span>{text("必须选择上方已有的 DeepSeek 工作区项目，之后才能使用 Map。", "Choose an existing DeepSeek workspace project above before using the Map.")}</span>
+            <div className="map-app-workspace-picker">
+              <header>
+                <span className="map-app-mark is-large" aria-hidden="true">
+                  <img className="map-app-mark-light" src={knotlineMarkLight} alt="" />
+                  <img className="map-app-mark-dark" src={knotlineMarkDark} alt="" />
+                </span>
+                <h1>{text("选择一个工作区，开始结绳", "Choose a workspace to start Knotline")}</h1>
+                <p>{text("结绳只使用已有的 DeepSeek 工作区。诉求、Agent 和交付都会记录在你选中的项目里。", "Knotline uses existing DeepSeek workspaces. Requests, agents, and deliveries are recorded in the project you choose.")}</p>
+              </header>
+              <div className="map-app-workspace-grid">
+                {workspaces.map((workspace, index) => (
+                  <button
+                    type="button"
+                    key={workspace.id}
+                    className={pendingWorkspaceId === workspace.id ? "is-selected" : ""}
+                    style={{ animationDelay: `${Math.min(index * 60, 420)}ms` }}
+                    onClick={() => setPendingWorkspaceId(workspace.id)}
+                    onDoubleClick={() => void selectWorkspace(workspace.id)}
+                  >
+                    <strong>{workspace.title}</strong>
+                    <small>{workspace.path}</small>
+                    <i aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+              <footer>
+                <button
+                  type="button"
+                  className="map-app-workspace-confirm"
+                  disabled={!pendingWorkspaceId || bindingWorkspace}
+                  onClick={() => void selectWorkspace(pendingWorkspaceId)}
+                >
+                  {bindingWorkspace ? text("正在进入…", "Entering…") : text("进入结绳", "Enter Knotline")}
+                  <span aria-hidden="true">→</span>
+                </button>
+              </footer>
             </div>
           )}
         </main>
