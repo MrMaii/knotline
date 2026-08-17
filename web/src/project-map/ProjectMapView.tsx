@@ -37,6 +37,7 @@ import type {
 import type { RootNodeKind } from "./AgentDrawer";
 import { RequestComposer, ScheduledTriggerComposer } from "./NodePalette";
 import { MapInspector } from "./MapInspector";
+import { NodeDetailOverlay } from "./NodeDetailOverlay";
 import { ProjectMapCanvas } from "./ProjectMapCanvas";
 import { RelationComposer } from "./RelationComposer";
 import { CanvasDrawer, NodeDrawer } from "./ToolbarDrawers";
@@ -178,6 +179,8 @@ export function ProjectMapView({ projectId, workspacePath, revision, focusNodeId
   const [controllingRun, setControllingRun] = useState(false);
   const [showExecutionDetails, setShowExecutionDetails] = useState(false);
   const [showFirstRunGuide, setShowFirstRunGuide] = useState(() => !firstRunGuideDismissed());
+  const [detailNodeId, setDetailNodeId] = useState<string | null>(null);
+  const detailNode = map?.nodes.find((node) => node.id === detailNodeId) ?? null;
   const closeFirstRunGuide = () => {
     dismissFirstRunGuide();
     setShowFirstRunGuide(false);
@@ -816,7 +819,16 @@ export function ProjectMapView({ projectId, workspacePath, revision, focusNodeId
           onCreateRoot={createRoot}
           onRenameAgent={renameAgent}
           onToggleScheduledTrigger={toggleScheduledTrigger}
-          onSelectNode={setSelectedNodeId}
+          onSelectNode={(nodeId) => {
+            const node = nodeId ? map?.nodes.find((candidate) => candidate.id === nodeId) ?? null : null;
+            // Requests and report-like nodes read better as a detail page than a sidebar.
+            if (node && ["demand", "request_artifact", "delivery"].includes(node.entityType)) {
+              setDetailNodeId(nodeId);
+              return;
+            }
+            setSelectedNodeId(nodeId);
+          }}
+          onOpenDetail={(record) => setDetailNodeId(record.id)}
           focusNodeId={focusNodeId}
           focusRequest={focusRequest}
         />
@@ -859,6 +871,9 @@ export function ProjectMapView({ projectId, workspacePath, revision, focusNodeId
           onRunControl={controlTaskBench}
           onDismissNotification={dismissNotification}
         />
+      )}
+      {detailNode && (
+        <NodeDetailOverlay node={detailNode} onClose={() => setDetailNodeId(null)} />
       )}
     </section>
   );

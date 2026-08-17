@@ -24,6 +24,7 @@ export type ProjectMapCanvasNode = Node<{
   record: ProjectMapNodeRecord;
   onRenameAgent: (node: ProjectMapNodeRecord, name: string) => Promise<void>;
   onToggleScheduledTrigger: (node: ProjectMapNodeRecord, enabled: boolean) => Promise<void>;
+  onOpenDetail: (node: ProjectMapNodeRecord) => void;
 }>;
 
 const ACTIVE_STATUSES = new Set(["working", "running", "queued", "generating", "in_progress"]);
@@ -84,7 +85,7 @@ function NodeHandles() {
 
 export const ProjectMapNodeCard = memo(function ProjectMapNodeCard({ data, selected }: NodeProps<ProjectMapCanvasNode>) {
   const { text } = useKnotlineI18n();
-  const { record, onRenameAgent, onToggleScheduledTrigger } = data;
+  const { record, onRenameAgent, onToggleScheduledTrigger, onOpenDetail } = data;
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(record.data.title);
   const variant = nodeVariant(record);
@@ -412,9 +413,14 @@ export const ProjectMapNodeCard = memo(function ProjectMapNodeCard({ data, selec
       className={`project-map-node is-${variant}${active ? " is-active" : " is-inactive"}${selected ? " is-selected" : ""}`}
       data-node-variant={variant}
       onDoubleClick={(event) => {
-        if (record.entityType !== "agent_profile") return;
         event.stopPropagation();
-        setEditing(true);
+        // Double-clicking the Agent name renames; the body opens the live run view.
+        const onTitle = (event.target as HTMLElement).closest(".project-map-node-title, .project-map-node-name-input") !== null;
+        if (record.entityType === "agent_profile" && onTitle) {
+          setEditing(true);
+          return;
+        }
+        onOpenDetail(record);
       }}
     >
       <NodeHandles />

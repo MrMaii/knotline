@@ -55,6 +55,7 @@ interface ProjectMapCanvasProps {
   onRenameAgent: (node: ProjectMapNode, name: string) => Promise<void>;
   onToggleScheduledTrigger: (node: ProjectMapNode, enabled: boolean) => Promise<void>;
   onSelectNode: (nodeId: string | null) => void;
+  onOpenDetail: (node: ProjectMapNode) => void;
   focusNodeId?: string | null | undefined;
   focusRequest?: number | undefined;
 }
@@ -63,6 +64,7 @@ function toCanvasNode(
   node: ProjectMapNode,
   onRenameAgent: ProjectMapCanvasProps["onRenameAgent"],
   onToggleScheduledTrigger: ProjectMapCanvasProps["onToggleScheduledTrigger"],
+  onOpenDetail: ProjectMapCanvasProps["onOpenDetail"],
 ): ProjectMapCanvasNode {
   return {
     id: node.id,
@@ -71,7 +73,7 @@ function toCanvasNode(
     width: node.width,
     height: node.height,
     zIndex: node.zIndex,
-    data: { record: node, onRenameAgent, onToggleScheduledTrigger },
+    data: { record: node, onRenameAgent, onToggleScheduledTrigger, onOpenDetail },
   };
 }
 
@@ -147,13 +149,14 @@ export function ProjectMapCanvas({
   onRenameAgent,
   onToggleScheduledTrigger,
   onSelectNode,
+  onOpenDetail,
   focusNodeId,
   focusRequest,
 }: ProjectMapCanvasProps) {
   const { text } = useKnotlineI18n();
   const projectedNodes = useMemo(
-    () => nodes.map((node) => toCanvasNode(node, onRenameAgent, onToggleScheduledTrigger)),
-    [nodes, onRenameAgent, onToggleScheduledTrigger],
+    () => nodes.map((node) => toCanvasNode(node, onRenameAgent, onToggleScheduledTrigger, onOpenDetail)),
+    [nodes, onRenameAgent, onToggleScheduledTrigger, onOpenDetail],
   );
   const [canvasNodes, setCanvasNodes] = useState(projectedNodes);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
