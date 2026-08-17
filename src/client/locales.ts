@@ -4,14 +4,14 @@ export const MODE_NS = 'knotline.mode'
 
 export const zh = {
   'locale.id': 'zh',
-  'launcher.label': '结绳',
-  'launcher.open.aria': '打开结绳',
+  'launcher.label': '运筹',
+  'launcher.open.aria': '打开运筹',
   'launcher.close.aria': '返回 DeepSeek Harness 聊天',
-  'launcher.open.title': '打开结绳',
+  'launcher.open.title': '打开运筹',
   'launcher.close.title': '返回聊天',
-  'launcher.open.hint': '结绳记事：在一张地图上规划、执行并审核项目',
-  'launcher.close.hint': '结绳模式 · 点击返回聊天',
-  'layer.aria': '结绳项目地图',
+  'launcher.open.hint': '在一张图上统筹规划、执行并审核项目',
+  'launcher.close.hint': '运筹模式 · 点击返回聊天',
+  'layer.aria': '运筹项目地图',
 } as const
 
 export type ModeLocaleKey = keyof typeof zh

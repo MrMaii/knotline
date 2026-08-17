@@ -183,7 +183,7 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
               <img className="map-app-mark-light" src={knotlineMarkLight} alt="" />
               <img className="map-app-mark-dark" src={knotlineMarkDark} alt="" />
             </span>
-            <div><strong>{text("结绳", "Knotline")}</strong><small>{text("Knotline", "结绳")}</small></div>
+            <div><strong>{text("运筹", "Knotline")}</strong><small>{text("Knotline", "运筹")}</small></div>
           </div>
           {selectedProject && (
             <div className="map-app-project">
@@ -249,8 +249,8 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
                   <img className="map-app-mark-light" src={knotlineMarkLight} alt="" />
                   <img className="map-app-mark-dark" src={knotlineMarkDark} alt="" />
                 </span>
-                <h1>{text("选择一个工作区，开始结绳", "Choose a workspace to start Knotline")}</h1>
-                <p>{text("结绳只使用已有的 DeepSeek 工作区。诉求、Agent 和交付都会记录在你选中的项目里。", "Knotline uses existing DeepSeek workspaces. Requests, agents, and deliveries are recorded in the project you choose.")}</p>
+                <h1>{text("选择一个工作区，开始运筹", "Choose a workspace to start Knotline")}</h1>
+                <p>{text("运筹只使用已有的 DeepSeek 工作区。诉求、Agent 和交付都会记录在你选中的项目里。", "Knotline uses existing DeepSeek workspaces. Requests, agents, and deliveries are recorded in the project you choose.")}</p>
               </header>
               <div className="map-app-workspace-grid">
                 {workspaces.map((workspace, index) => (
@@ -275,7 +275,7 @@ export function App({ language: languageInput, user, workspaces, workspacesLoadi
                   disabled={!pendingWorkspaceId || bindingWorkspace}
                   onClick={() => void selectWorkspace(pendingWorkspaceId)}
                 >
-                  {bindingWorkspace ? text("正在进入…", "Entering…") : text("进入结绳", "Enter Knotline")}
+                  {bindingWorkspace ? text("正在进入…", "Entering…") : text("进入运筹", "Enter Knotline")}
                   <span aria-hidden="true">→</span>
                 </button>
               </footer>
