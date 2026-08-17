@@ -872,8 +872,15 @@ export function ProjectMapView({ projectId, workspacePath, revision, focusNodeId
           onDismissNotification={dismissNotification}
         />
       )}
-      {detailNode && (
-        <NodeDetailOverlay node={detailNode} onClose={() => setDetailNodeId(null)} />
+      {detailNode && map && (
+        <NodeDetailOverlay
+          node={detailNode}
+          nodes={map.nodes}
+          onClose={() => setDetailNodeId(null)}
+          onSendComment={async (agentProfileId, message) => {
+            await sendAgentRuntimeMessage(agentProfileId, "followup", message);
+          }}
+        />
       )}
     </section>
   );
