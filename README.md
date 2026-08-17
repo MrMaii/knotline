@@ -1,20 +1,36 @@
-# Knotline
+<div align="center">
 
-Knotline is a project operating map plugin for the DeepSeek Harness sidebar.
+<img src="docs/assets/knotline-banner.svg" alt="运筹 Knotline — plan, execute, and review real agent work on one operating map" width="100%" />
 
-The product has one surface: Map. Demands, agents, project knowledge, execution, delivery, and review all live on the same canvas. There is no task list, board, dashboard, timeline, workflow editor, or separate operations console.
+<br/><br/>
+
+[![License](https://img.shields.io/badge/license-Apache--2.0-6172f3)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-2e90fa)](package.json)
+[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.1.0--rc.6-12b76a)](docs/compatibility.md)
+
+**English** · [简体中文](README.zh-CN.md)
+
+</div>
+
+---
+
+Knotline (**运筹**) is a project operating map plugin for the DeepSeek Harness sidebar. The product has one surface: the Map. Requests, agents, project knowledge, execution, delivery, and review live on the same canvas — there is no task list, board, dashboard, timeline, or separate operations console. **Connecting two nodes is a command: the line runs real agent work.**
+
+## Highlights
+
+- **Draw a line, run an agent** — connect a Request to an Agent and classification derives an Answer for questions, Review Feedback then Plan for complex work, or a live Task Bench for Debug in your workspace.
+- **Six root node types** — Request, Agent, Skill, Backlog, Approval Pool, and Scheduled Trigger. Everything else (answers, plans, teams, reviews, deliveries) grows on the map by itself.
+- **Chat-grade visibility** — running Task Benches expose a live transcript of the agent conversation; finished work carries the agent's full reply, delivery summary, and validation evidence.
+- **Reports read like posts** — Work Reports open as fullscreen pages with Markdown, text annotation, and comments that are relayed back to the producing agent.
+- **Governed by design** — execution flows through a pre-review artifact and an independent reviewer; self-approval is rejected by the backend.
+- **Teams, queues, and schedules** — connect Agents to form Teams, queue work through Backlog and Approval pools, and drive recurring prompts with Host-owned Scheduled Triggers.
 
 ## The workflow
 
-1. Select a project that already exists in the DeepSeek Harness workspace.
-2. Create only six root node types: **Request**, **Agent**, **Skill**, **Backlog**, **Approval Pool**, and **Scheduled Trigger**. Every Agent owns a resumable DSH conversation.
-3. Drag Request from the top drawer onto the canvas to open the blurred composer. Submitting creates an island node and does not execute it.
-4. Connect Request to Agent. Automatic classification derives an Answer for questions, Review Feedback then Plan for complex work, or a live Task Bench for Debug in the selected workspace.
-5. Capability routing creates a visible delegation edge when another Agent is a better match. Connecting two Agents derives a Team while retaining both member conversations and working methods.
-6. Connect Requests and Agents to a Backlog to queue and assign work. Connect an Approval Pool to a trusted Agent to gate execution behind approved plans. Connect a Scheduled Trigger to an Agent or Team to send its Prompt on a persistent Host-owned interval.
-7. Completion continues through a Pre-review Artifact, independent review, and Delivery.
-
-Task, NodeRun, Session, Workstream, Knowledge, Review, and Notification records remain implementation primitives. They do not appear as user-created node types.
+1. Pick an existing DeepSeek Harness workspace on the fullscreen picker.
+2. Drag root nodes from the top drawer; a Request opens the blurred composer and lands as an island — nothing executes yet.
+3. Connect the Request to an Agent. The line classifies the work and starts a real, resumable DSH conversation.
+4. Watch the run live, annotate the report it produces, and let the independent review gate carry it to Delivery.
 
 ## Run
 
@@ -25,7 +41,7 @@ npx @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add (Resolve-Path .).Path
 npx @deepseek-ai/dsh@0.1.0-rc.6 web
 ```
 
-Open the URL printed by DSH and select **Map** in the sidebar. The Map renders inside the DSH plugin layer. Knotline has no standalone page.
+Open the URL printed by DSH and select **运筹 / Knotline** in the sidebar. The Map renders inside the DSH plugin layer; there is no standalone page.
 
 ## Verify
 
@@ -34,7 +50,7 @@ npm run check
 npm run pack:check
 ```
 
-See the Chinese [product requirements document](docs/PRD.md), [docs/architecture.md](docs/architecture.md) for the runtime path, and [docs/development.md](docs/development.md) for local development. 中文说明见 [README.zh-CN.md](README.zh-CN.md)。
+See the Chinese [product requirements document](docs/PRD.md), [docs/architecture.md](docs/architecture.md) for the runtime path, and [docs/development.md](docs/development.md) for local development.
 
 ## License and provenance
 

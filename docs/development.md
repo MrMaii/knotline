@@ -36,7 +36,7 @@ npx @deepseek-ai/dsh@0.1.0-rc.6 --profile web --dump-config
 npx @deepseek-ai/dsh@0.1.0-rc.6 web
 ```
 
-Then verify `/knotline/api/health`, open the official DSH Web UI, and select **Map** in its sidebar. Confirm that Map stays unavailable until an existing DSH Workspace project is selected. Drag Agent, Request, Backlog, Approval Pool, and Scheduled Trigger from the top drawers; choose Skill from the installed list. Confirm that Request opens the blurred composer only after landing and creates an island without execution. Double-click an Agent to rename it, and confirm positions and names persist. Also confirm that returning to Chat works and `/knotline/map/` returns 404 because no standalone page exists.
+Then verify `/knotline/api/health`, open the official DSH Web UI, and select **运筹 / Knotline** in its sidebar. Confirm that Map stays unavailable until an existing DSH Workspace project is selected. Drag Agent, Request, Backlog, Approval Pool, and Scheduled Trigger from the top drawers; choose Skill from the installed list. Confirm that Request opens the blurred composer only after landing and creates an island without execution. Double-click an Agent to rename it, and confirm positions and names persist. Also confirm that returning to Chat works and `/knotline/map/` returns 404 because no standalone page exists.
 
 For the operating-map smoke path, use one isolated Project and verify:
 
