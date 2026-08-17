@@ -50,6 +50,24 @@ interface ProjectMapViewProps {
   focusRequest?: number | undefined;
 }
 
+const FIRST_RUN_GUIDE_KEY = "knotline.firstRunGuideDismissed";
+
+function firstRunGuideDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(FIRST_RUN_GUIDE_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
+function dismissFirstRunGuide(): void {
+  try {
+    window.localStorage.setItem(FIRST_RUN_GUIDE_KEY, "1");
+  } catch {
+    // Private-mode storage failures just skip persistence.
+  }
+}
+
 // crypto.randomUUID is unavailable in non-secure contexts (plain HTTP off localhost).
 function newIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -159,6 +177,11 @@ export function ProjectMapView({ projectId, workspacePath, revision, focusNodeId
   const [decidingReview, setDecidingReview] = useState(false);
   const [controllingRun, setControllingRun] = useState(false);
   const [showExecutionDetails, setShowExecutionDetails] = useState(false);
+  const [showFirstRunGuide, setShowFirstRunGuide] = useState(() => !firstRunGuideDismissed());
+  const closeFirstRunGuide = () => {
+    dismissFirstRunGuide();
+    setShowFirstRunGuide(false);
+  };
   const selectedNode = map?.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const displayedMap = useMemo(() => (
     map && !showExecutionDetails ? simpleWorkflowMap(map) : map
@@ -702,6 +725,36 @@ export function ProjectMapView({ projectId, workspacePath, revision, focusNodeId
 
   return (
     <section className="project-map-view" aria-label={text("项目运行地图", "Project operating map")}>
+      {showFirstRunGuide && (
+        <div
+          className="project-map-request-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeFirstRunGuide();
+          }}
+        >
+          <div
+            className="project-map-first-run-guide"
+            role="dialog"
+            aria-modal="true"
+            aria-label={text("三步跑通第一个工作流", "Your first workflow in three steps")}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeFirstRunGuide();
+            }}
+          >
+            <strong>{text("三步跑通第一个工作流", "Your first workflow in three steps")}</strong>
+            <ol>
+              <li><b>1</b>{text("从右上「节点」抽屉拖出一个 Agent", "Drag an Agent from the Nodes drawer")}</li>
+              <li><b>2</b>{text("再拖出一个诉求，写下你想要什么", "Drag a Request and describe what you want")}</li>
+              <li><b>3</b>{text("把诉求连向 Agent —— 连线即执行", "Connect the Request to the Agent — the line runs it")}</li>
+            </ol>
+            <small>{text("回答、计划、审核和交付会自动长在同一张地图上", "Answers, plans, reviews, and deliveries grow on this map by themselves")}</small>
+            <button type="button" className="is-primary" autoFocus onClick={closeFirstRunGuide}>
+              {text("知道了，开始使用", "Got it, start mapping")}
+            </button>
+          </div>
+        </div>
+      )}
       <header className="project-map-toolbar">
         <div>
           <strong>{map?.canvas.name ?? text("项目画布", "Project canvas")}</strong>
