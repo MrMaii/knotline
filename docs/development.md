@@ -29,14 +29,51 @@ npm run pack:check
 For integration, use an isolated DSH home:
 
 ```powershell
-$dshTestHome = New-Item -ItemType Directory -Force .\.dsh-test-home
+$dshTestHome = New-Item -ItemType Directory -Force (Join-Path ([System.IO.Path]::GetTempPath()) "knotline-dsh-test")
 $env:DSH_HOME = $dshTestHome.FullName
 npx @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add (Resolve-Path .).Path
 npx @deepseek-ai/dsh@0.1.0-rc.6 --profile web --dump-config
 npx @deepseek-ai/dsh@0.1.0-rc.6 web
 ```
 
-Then verify `/knotline/api/health`, open the official DSH Web UI, and select **运筹 / Knotline** in its sidebar. Confirm that Map stays unavailable until an existing DSH Workspace project is selected. Drag Agent, Request, Backlog, Approval Pool, and Scheduled Trigger from the top drawers; choose Skill from the installed list. Confirm that Request opens the blurred composer only after landing and creates an island without execution. Double-click an Agent to rename it, and confirm positions and names persist. Also confirm that returning to Chat works and `/knotline/map/` returns 404 because no standalone page exists.
+The `--dump-config` command should print a composed web profile containing the Knotline plugin. Once the web server is running, check that the health endpoint returns success:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:3000/knotline/api/health
+```
+
+The response should indicate a healthy Knotline server. Open the official DSH Web UI and select **运筹 / Knotline** in its sidebar. When finished, remove the isolated profile:
+
+```powershell
+Remove-Item -Recurse -Force $dshTestHome.FullName
+Remove-Item Env:DSH_HOME
+```
+
+On macOS or Linux, use the equivalent POSIX-shell recipe:
+
+```sh
+set -eu
+dsh_test_home="$(mktemp -d "${TMPDIR:-/tmp}/knotline-dsh-test.XXXXXX")"
+export DSH_HOME="$dsh_test_home"
+npx @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add "$PWD"
+npx @deepseek-ai/dsh@0.1.0-rc.6 --profile web --dump-config
+npx @deepseek-ai/dsh@0.1.0-rc.6 web
+```
+
+The `--dump-config` command should print a composed web profile containing the Knotline plugin. With the web server running, verify the health endpoint and its success response:
+
+```sh
+curl --fail --silent --show-error http://127.0.0.1:3000/knotline/api/health
+```
+
+Then open the official DSH Web UI and select **运筹 / Knotline** in its sidebar. Clean up the isolated profile when finished:
+
+```sh
+rm -rf -- "$DSH_HOME"
+unset DSH_HOME
+```
+
+For either shell, the web server may use a different configured port; if so, substitute that port in the health probe. Confirm that Map stays unavailable until an existing DSH Workspace project is selected. Drag Agent, Request, Backlog, Approval Pool, and Scheduled Trigger from the top drawers; choose Skill from the installed list. Confirm that Request opens the blurred composer only after landing and creates an island without execution. Double-click an Agent to rename it, and confirm positions and names persist. Also confirm that returning to Chat works and `/knotline/map/` returns 404 because no standalone page exists. The POSIX recipe was checked on Linux; the PowerShell block was not directly run here.
 
 For the operating-map smoke path, use one isolated Project and verify:
 
