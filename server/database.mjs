@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -796,8 +796,11 @@ function projectPrefix(projectId) {
 
 export class KnotlineDatabase {
   constructor(filename) {
-    mkdirSync(path.dirname(filename), { recursive: true });
+    const directory = path.dirname(filename);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") chmodSync(directory, 0o700);
     this.database = new DatabaseSync(filename);
+    if (process.platform !== "win32") chmodSync(filename, 0o600);
     this.database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     this.#migrate();
     this.interruptAbandonedAiChatRuns();

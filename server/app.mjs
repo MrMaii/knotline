@@ -2670,6 +2670,9 @@ export function createKnotlineServer(options = {}) {
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
+      if (resolved.dshMode && isLocalAiRoute) {
+        throw new ApiError(404, "NOT_FOUND", "Route not found");
+      }
       if (isLocalAiRoute) {
         assertAiLoopbackRequest(request);
       } else if (pathname.startsWith("/api/local/")) {
@@ -2680,7 +2683,7 @@ export function createKnotlineServer(options = {}) {
         || pathname === "/api/workflow-capabilities"
         || pathname === "/api/model-selection"
         || /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
-      const capabilityCloudConfig = isMachineCapabilityRoute
+      const capabilityCloudConfig = !resolved.dshMode && isMachineCapabilityRoute
         ? await cloudConfig.read()
         : null;
       if (capabilityCloudConfig?.remoteUrl) assertLoopbackRequest(request);
@@ -3104,7 +3107,7 @@ export function createKnotlineServer(options = {}) {
       }
 
       let currentCloudConfig = null;
-      if (pathname.startsWith("/api/")) {
+      if (!resolved.dshMode && pathname.startsWith("/api/")) {
         currentCloudConfig = await cloudConfig.read();
         if (currentCloudConfig.remoteUrl) {
           assertLoopbackRequest(request);
@@ -4101,9 +4104,10 @@ export function createKnotlineServer(options = {}) {
           const metadata = parseAttachmentHeaders(request);
           const body = await readBody(request, ATTACHMENT_BODY_LIMIT, "Attachment cannot exceed 25 MiB");
           const id = randomUUID();
-          await mkdir(resolved.attachmentsDirectory, { recursive: true });
+          await mkdir(resolved.attachmentsDirectory, { recursive: true, mode: 0o700 });
+          if (process.platform !== "win32") await chmod(resolved.attachmentsDirectory, 0o700);
           const storagePath = path.join(resolved.attachmentsDirectory, id);
-          await writeFile(storagePath, body, { flag: "wx" });
+          await writeFile(storagePath, body, { flag: "wx", mode: 0o600 });
           let attachment;
           try {
             attachment = database.createCommentAttachment(commentId, { id, ...metadata, size: body.length });
@@ -4141,9 +4145,10 @@ export function createKnotlineServer(options = {}) {
           const metadata = parseAttachmentHeaders(request);
           const body = await readBody(request, ATTACHMENT_BODY_LIMIT, "Attachment cannot exceed 25 MiB");
           const id = randomUUID();
-          await mkdir(resolved.attachmentsDirectory, { recursive: true });
+          await mkdir(resolved.attachmentsDirectory, { recursive: true, mode: 0o700 });
+          if (process.platform !== "win32") await chmod(resolved.attachmentsDirectory, 0o700);
           const storagePath = path.join(resolved.attachmentsDirectory, id);
-          await writeFile(storagePath, body, { flag: "wx" });
+          await writeFile(storagePath, body, { flag: "wx", mode: 0o600 });
           let attachment;
           try {
             attachment = database.createAttachment(taskId, { id, ...metadata, size: body.length });

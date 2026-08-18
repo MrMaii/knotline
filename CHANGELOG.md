@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-18
+
+### Security
+
+- Restrict the DSH plugin to loopback peers and to the exact Map routes and methods used by the current client and Agent lifecycle.
+- Disable hidden legacy local-AI and stale Cloud forwarding in DSH mode.
+- Bind Agent lifecycle and review tools to the assigned Agent, Node Run, Project, Workstream, and Review Gate.
+- Create local SQLite and attachment storage with private owner-only permissions on POSIX systems.
+- Ignore conventional `.env` and `.npmrc` credential files to prevent accidental commits.
+
 ## [0.1.0] - 2026-08-17
 
 ### Added

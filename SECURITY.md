@@ -4,14 +4,16 @@ Knotline mounts a local HTTP + SSE API (`/knotline/map/api/*` and `/knotline/api
 
 Threat model you should assume:
 
-- Requests are authenticated only by the surrounding DSH Web instance. Actor identity on the map API is asserted via request headers and is not independently verified; any process that can reach the DSH Web port can act on the map, including triggering agent execution.
+- The plugin accepts only loopback peers and positively allowlists the Map routes used by the current client and Agent lifecycle. Authentication remains the responsibility of the surrounding DSH Web instance; any process that can reach its local port can act on the map, including triggering agent execution.
+- Legacy local-AI, Cloud, Jira, task, comment, attachment, and device-workspace routes are not exposed by the DSH plugin. No maintainer endpoint, account, key, token, database, or runtime configuration is distributed; every installation uses its owner's DSH environment and credentials.
+- Agent lifecycle tools are bound to their assigned Agent and Node Run. Review decisions additionally require the assigned reviewer, Project, Workstream, and Review Gate.
 - Session content, prompts, tool arguments/results, delivery text, and workspace paths are stored in the local database (`knotline.sqlite`) and may appear in API responses and SSE events.
 - Treat access to Knotline as equivalent to access to the corresponding DSH Web instance and its workspaces.
 
 Hardening guidance:
 
-- Never expose a DSH Web bind to an untrusted network. Keep it on loopback or behind an authenticated reverse proxy.
-- Do not commit or share the `.data/` directory or any `knotline.sqlite*` files; they contain real project and session content.
+- Never expose a DSH Web bind to an untrusted network. Keep it on loopback; if an authenticated reverse proxy is required, run it on the same host so its connection to DSH remains loopback.
+- Do not commit or share `.env*`, `.npmrc`, `.data/`, or any `knotline.sqlite*` files; they contain credentials or real project and session content.
 
 ## Reporting a vulnerability
 

@@ -45,6 +45,12 @@ import {
   summarizeSession,
   titleMap,
 } from './project.ts'
+import {
+  assertAssignedNodeRun,
+  assertAssignedReview,
+  isAllowedMapApiRequest,
+  isLoopbackAddress,
+} from './security.ts'
 
 export const name = 'knotline'
 export const inject = [
@@ -78,6 +84,7 @@ interface KnotlineServerHandle {
     createAgentRuntimeBinding(input: Record<string, unknown>): any
     getAgentTeamMembers(id: string): any[]
     getNodeRun(id: string): any
+    getReviewGate(id: string): any
     getKnowledgeAsset(id: string): any
     getKnowledgeVersion(assetId: string, versionNumber: number): any
     getProject(id: string): any
@@ -228,7 +235,7 @@ const AGENT_REQUEST_HEADERS = {
   'X-Knotline-User-Name': encodeURIComponent('DeepSeek Harness'),
 }
 
-function executionTools(ctx: Context) {
+function executionTools(ctx: Context, knotline: KnotlineServerHandle, agentProfileId: string) {
   return [
     defineTool({
       name: 'knotline_read_project_context',
@@ -247,6 +254,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: value.context }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         return knotlineJson<{ context: string }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/project-context`, {
           signal: exec.signal,
         })
@@ -270,6 +278,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Node Run ${value.nodeRunId} is ${value.status}.` }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         const result = await knotlineJson<{ nodeRun: { id: string; status: string } }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/start`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -299,6 +308,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Node Run ${value.nodeRunId} is ${value.status}.` }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         const result = await knotlineJson<{ nodeRun: { id: string; status: string } }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/update`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -328,6 +338,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Node Run ${value.nodeRunId} entered ${value.status}.` }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         const result = await knotlineJson<{ nodeRun: { id: string; status: string } }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/submit-delivery`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -357,6 +368,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Review requested for Node Run ${value.nodeRunId}.` }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         const result = await knotlineJson<{ nodeRun: { id: string; status: string } }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/request-review`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -389,6 +401,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Pre-review artifact ${value.reviewGateId} was ${value.decision}.` }],
       },
       async execute(args, exec) {
+        assertAssignedReview(knotline.database, agentProfileId, args)
         await knotlineJson(ctx, `/projects/${encodeURIComponent(args.projectId)}/graph/commands`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -432,6 +445,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Node Run ${value.nodeRunId} is ${value.status}.` }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         const result = await knotlineJson<{ nodeRun: { id: string; status: string } }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/update`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -461,6 +475,7 @@ function executionTools(ctx: Context) {
         render: (_args, value) => [{ type: 'text', text: `Knowledge proposal ${value.proposalId} is ${value.status}.` }],
       },
       async execute(args, exec) {
+        assertAssignedNodeRun(knotline.database, agentProfileId, args.nodeRunId)
         return knotlineJson<{ proposalId: string; status: string }>(ctx, `/node-runs/${encodeURIComponent(args.nodeRunId)}/knowledge-proposals`, {
           method: 'POST',
           headers: AGENT_REQUEST_HEADERS,
@@ -489,7 +504,7 @@ class AgentOrchestrator {
     private readonly knotline: KnotlineServerHandle,
   ) {}
 
-  private async setupAgent(agentCtx: Context): Promise<void> {
+  private async setupAgent(agentCtx: Context, agentProfileId: string): Promise<void> {
     const globalModel = this.ctx.agentDefaultModel
     const selection: ModelSelectionRef = {
       get current() {
@@ -501,7 +516,7 @@ class AgentOrchestrator {
       () => installModelSelection(agentCtx, selection),
       'knotline: global model selection',
     )
-    for (const tool of executionTools(this.ctx)) {
+    for (const tool of executionTools(this.ctx, this.knotline, agentProfileId)) {
       agentCtx.effect(() => agentCtx.tools.register(tool), `knotline: scoped ${tool.name}`)
     }
     await Promise.all([
@@ -556,7 +571,7 @@ class AgentOrchestrator {
       const handle = await this.ctx.agents.resume({
         resumeSessionId: sessionId,
         agentOptions,
-        setup: agentCtx => this.setupAgent(agentCtx),
+        setup: agentCtx => this.setupAgent(agentCtx, profile.id),
       })
       this.handles.set(profile.id, handle)
       return handle.agent
@@ -567,7 +582,7 @@ class AgentOrchestrator {
       sessionId,
       meta: { cwd: project.workspacePath ?? process.cwd() },
       agentOptions,
-      setup: agentCtx => this.setupAgent(agentCtx),
+      setup: agentCtx => this.setupAgent(agentCtx, profile.id),
     })
     this.handles.set(profile.id, handle)
     this.knotline.database.updateAgentRuntimeBinding(profile.id, {
@@ -1052,7 +1067,17 @@ async function handleRequest(
   const url = new URL(req.url ?? KNOTLINE_BASE_PATH, 'http://knotline.local')
   const pathname = url.pathname
 
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    sendError(res, 403, 'LOOPBACK_REQUIRED', 'Knotline accepts requests only from the local DSH host.')
+    return
+  }
+
   if (pathname === `${MAP_BASE_PATH}/api` || pathname.startsWith(`${MAP_BASE_PATH}/api/`)) {
+    const mapPathname = pathname.slice(MAP_BASE_PATH.length)
+    if (!isAllowedMapApiRequest(req.method, mapPathname)) {
+      sendError(res, 404, 'API_NOT_FOUND', 'Unknown Knotline Map API route.')
+      return
+    }
     forwardMapRequest(knotline, req, res, url)
     return
   }
@@ -1107,7 +1132,7 @@ export function apply(ctx: Context): void {
     dataDirectory: dshHomePath('knotline', 'knotline'),
     staticDirectory: dshHomePath('knotline', 'no-static-ui'),
     skillPath: '',
-    version: '0.1.0',
+    version: '0.1.1',
     workflowCapabilities: (workspacePath: string) => workflowCapabilities(ctx, workspacePath),
     modelSelection: {
       get: () => globalModelDirectory(ctx),
