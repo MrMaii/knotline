@@ -1,0 +1,26 @@
+Knotline
+Copyright 2026 Thomas Deng for Knotline-specific original contributions and
+modifications, as identified by the repository history.
+
+Knotline is an independent, extensively modified continuation of Dashi
+Taskboard, available at https://github.com/chuspeeism/dashi-taskboard and
+licensed under the Apache License, Version 2.0. Copyright in Dashi Taskboard
+contributions remains with the respective contributors. No upstream copyright
+has been assigned to the Knotline maintainer.
+
+Knotline interoperates with DeepSeek Harness and uses DeepSeek Harness packages
+under the MIT License. DeepSeek Harness is available at
+https://github.com/deepseek-ai/deepseek-harness and bears the notice
+"Copyright (c) 2026 DeepSeek".
+
+The browser distribution contains additional third-party software under MIT,
+ISC, and BSD-3-Clause licenses. Required notices and license texts are in
+THIRD_PARTY_NOTICES.md.
+
+Except for identified third-party components, Knotline is distributed under
+the Apache License, Version 2.0. See LICENSE and PROVENANCE.md.
+
+Knotline is not affiliated with, endorsed by, sponsored by, or an official
+product of the Dashi Taskboard maintainers or DeepSeek. Dashi Taskboard,
+DeepSeek, DeepSeek Harness, and other names and marks belong to their respective
+owners and are used only to identify origin or compatibility.

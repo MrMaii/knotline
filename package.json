@@ -1,0 +1,162 @@
+{
+  "name": "knotline-dsh",
+  "version": "0.1.0",
+  "description": "A single project operating map for DeepSeek Harness.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/index.d.ts",
+    "lib/client.js",
+    "lib/client.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "LICENSE",
+    "NOTICE",
+    "PROVENANCE.md",
+    "THIRD_PARTY_NOTICES.md",
+    "CONTRIBUTING.md",
+    "DCO.txt",
+    "RELEASING.md",
+    "SECURITY.md",
+    "docs/assets/knotline-banner.svg",
+    "docs/assets/knotline-wordmark.svg",
+    "docs/assets/demo-workflow.svg",
+    "docs/assets/demo-nodes.svg",
+    "docs/assets/demo-transcript.svg",
+    "docs/assets/demo-governance.svg",
+    "docs/assets/divider.svg",
+    "docs/PRD.md",
+    "docs/architecture.md",
+    "docs/compatibility.md",
+    "docs/development.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build:plugin": "tsdown",
+    "build": "npm run clean && npm run build:plugin",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src web/src scripts test",
+    "test": "vitest run test/package.test.ts",
+    "test:node": "node --test \"test/*.test.mjs\"",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run test:node && npm run build",
+    "pack:check": "npm pack --dry-run",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "project-map",
+    "agent-orchestration"
+  ],
+  "author": "Thomas Deng",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrMaii/knotline.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MrMaii/knotline/issues"
+  },
+  "homepage": "https://github.com/MrMaii/knotline#readme",
+  "peerDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-query": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-skill": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-skill-filesystem": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-fs": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-fs-search": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-pwsh": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@xyflow/react": "^12.11.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-query": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-skill": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-skill-filesystem": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-fs": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-fs-search": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-pwsh": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@types/node": "^24.10.0",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
+    "lightningcss": "^1.30.2",
+    "oxlint": "^1.47.0",
+    "tsdown": "^0.17.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "undici": "7.29.0"
+  }
+}

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 340" role="img" aria-label="连线即执行 — a line runs real agent work" font-family="'PingFang SC','Microsoft YaHei',Segoe UI,sans-serif">
+  <defs>
+    <linearGradient id="av" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6172f3"/><stop offset="1" stop-color="#444ce7"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="340" rx="20" fill="#f7f8fa"/>
+  <g fill="#d6d9e0" opacity="0.5">
+    <circle cx="80" cy="50" r="1.6"/><circle cx="240" cy="300" r="1.6"/><circle cx="520" cy="40" r="1.6"/>
+    <circle cx="760" cy="310" r="1.6"/><circle cx="930" cy="60" r="1.6"/><circle cx="420" cy="180" r="1.6"/>
+  </g>
+
+  <!-- Scene 1: request card -->
+  <g>
+    <animate attributeName="opacity" values="0;1;1;1;1;1;0" keyTimes="0;0.06;0.2;0.5;0.8;0.96;1" dur="8s" repeatCount="indefinite"/>
+    <rect x="60" y="110" width="240" height="110" rx="16" fill="#fff" stroke="#84adff"/>
+    <text x="82" y="145" fill="#175cd3" font-size="12" font-weight="700" letter-spacing="1">诉求 · QUESTION</text>
+    <text x="82" y="175" fill="#182230" font-size="15" font-weight="700">这个项目的 README</text>
+    <text x="82" y="197" fill="#667085" font-size="13">主要说明了什么？</text>
+  </g>
+
+  <!-- Scene 2: the connecting line draws itself, then carries signal -->
+  <path d="M 300 165 C 380 165 400 165 470 165" fill="none" stroke="#6172f3" stroke-width="3.5"
+    stroke-linecap="round" stroke-dasharray="10 8">
+    <animate attributeName="opacity" values="0;0;1;1;1;1;0" keyTimes="0;0.12;0.18;0.5;0.8;0.96;1" dur="8s" repeatCount="indefinite"/>
+    <animate attributeName="stroke-dashoffset" from="0" to="-72" dur="1.6s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- Scene 3: agent card working -->
+  <g>
+    <animate attributeName="opacity" values="0;0;1;1;1;1;0" keyTimes="0;0.16;0.22;0.5;0.8;0.96;1" dur="8s" repeatCount="indefinite"/>
+    <rect x="470" y="102" width="230" height="126" rx="46" fill="#fff" stroke="#2e90fa"/>
+    <circle cx="520" cy="165" r="24" fill="url(#av)"/>
+    <text x="520" y="171" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">A1</text>
+    <text x="556" y="150" fill="#98a2b3" font-size="10" font-weight="750" letter-spacing="1.4">AGENT</text>
+    <text x="556" y="172" fill="#182230" font-size="15" font-weight="700">Agent 1</text>
+    <g>
+      <animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.24;0.3;0.62;0.68;0.96;1" dur="8s" repeatCount="indefinite"/>
+      <text x="556" y="194" fill="#175cd3" font-size="12">正在运行 · 读取工作区…</text>
+      <rect x="556" y="204" width="118" height="5" rx="2.5" fill="#d1e9ff"/>
+      <rect x="556" y="204" width="60" height="5" rx="2.5" fill="#2e90fa">
+        <animate attributeName="width" values="20;100;30;110;20" dur="3.2s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+    <g>
+      <animate attributeName="opacity" values="0;0;0;0;1;1;0" keyTimes="0;0.6;0.64;0.66;0.72;0.96;1" dur="8s" repeatCount="indefinite"/>
+      <text x="556" y="199" fill="#067647" font-size="12" font-weight="700">✓ 完成 · 已提交交付</text>
+    </g>
+  </g>
+
+  <!-- Scene 4: answer derives -->
+  <path d="M 700 165 C 750 165 760 165 800 165" fill="none" stroke="#12b76a" stroke-width="3" stroke-linecap="round">
+    <animate attributeName="opacity" values="0;0;0;0;1;1;0" keyTimes="0;0.6;0.66;0.68;0.74;0.96;1" dur="8s" repeatCount="indefinite"/>
+  </path>
+  <g>
+    <animate attributeName="opacity" values="0;0;0;0;1;1;0" keyTimes="0;0.62;0.68;0.7;0.76;0.96;1" dur="8s" repeatCount="indefinite"/>
+    <rect x="800" y="106" width="150" height="118" rx="16" fill="#fff" stroke="#6ce9a6"/>
+    <text x="820" y="138" fill="#039855" font-size="11" font-weight="750" letter-spacing="1">AGENT 回答</text>
+    <rect x="820" y="152" width="108" height="7" rx="3.5" fill="#e4e7ec"/>
+    <rect x="820" y="167" width="92" height="7" rx="3.5" fill="#e4e7ec"/>
+    <rect x="820" y="182" width="102" height="7" rx="3.5" fill="#e4e7ec"/>
+    <text x="820" y="211" fill="#12b76a" font-size="12" font-weight="700">✓ ready</text>
+  </g>
+
+  <!-- Caption -->
+  <text x="500" y="290" fill="#475467" font-size="15" font-weight="700" text-anchor="middle">画一条线 → 分类 → 真实执行 → 结果长在图上</text>
+  <text x="500" y="314" fill="#98a2b3" font-size="12" text-anchor="middle">Draw a line → classify → real execution → the result grows on the map</text>
+</svg>
