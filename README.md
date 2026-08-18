@@ -7,6 +7,8 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-6172f3)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-2e90fa)](package.json)
 [![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.1.0--rc.6-12b76a)](docs/compatibility.md)
+[![npm version](https://img.shields.io/npm/v/knotline-dsh)](https://www.npmjs.com/package/knotline-dsh)
+[![npm downloads](https://img.shields.io/npm/dm/knotline-dsh)](https://www.npmjs.com/package/knotline-dsh)
 
 **English** · [简体中文](README.zh-CN.md)
 
